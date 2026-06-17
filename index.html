@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gestión de Visitas de Monitorización</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <!-- Flatpickr para selector de fechas -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
+</head>
+<body>
+
+  <!-- SIDEBAR -->
+  <nav id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+        </svg>
+        <span>Monitorización</span>
+      </div>
+    </div>
+    <ul class="sidebar-menu">
+      <li><a href="#" class="nav-link active" data-view="dashboard">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+        <span>Inicio</span>
+      </a></li>
+      <li><a href="#" class="nav-link" data-view="citas">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        <span>Visitas</span>
+      </a></li>
+      <li><a href="#" class="nav-link" data-view="monitores">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        <span>Monitores</span>
+      </a></li>
+      <li><a href="#" class="nav-link" data-view="ensayos">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <span>Ensayos</span>
+      </a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <span id="hospital-name">Coordinación de Ensayos</span>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <main id="main-content">
+
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <button id="menu-toggle" class="menu-btn" title="Menú">
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <h1 id="page-title" class="topbar-title">Inicio</h1>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" id="btn-nueva-cita">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          Nueva Visita
+        </button>
+      </div>
+    </header>
+
+    <!-- VISTAS -->
+    <div id="view-container" class="view-container">
+
+      <!-- DASHBOARD -->
+      <section id="view-dashboard" class="view active">
+        <div class="stats-grid">
+          <div class="stat-card stat-blue">
+            <div class="stat-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">Visitas este mes</span>
+              <span class="stat-value" id="stat-mes">0</span>
+            </div>
+          </div>
+          <div class="stat-card stat-yellow">
+            <div class="stat-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">Visitas pendientes</span>
+              <span class="stat-value" id="stat-pendientes">0</span>
+            </div>
+          </div>
+          <div class="stat-card stat-green">
+            <div class="stat-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">Visitas realizadas</span>
+              <span class="stat-value" id="stat-realizadas">0</span>
+            </div>
+          </div>
+          <div class="stat-card stat-purple">
+            <div class="stat-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">Ensayos activos</span>
+              <span class="stat-value" id="stat-ensayos">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Próximas visitas -->
+        <div class="card mt-4">
+          <div class="card-header">
+            <h2 class="card-title">Próximas Visitas</h2>
+          </div>
+          <div id="proximas-visitas-list" class="card-body">
+            <p class="empty-msg">No hay visitas próximas programadas.</p>
+          </div>
+        </div>
+
+        <!-- Visitas por ensayo -->
+        <div class="card mt-4">
+          <div class="card-header">
+            <h2 class="card-title">Visitas por Ensayo</h2>
+          </div>
+          <div id="visitas-por-ensayo" class="card-body">
+            <p class="empty-msg">Sin datos.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- VISITAS / CITAS -->
+      <section id="view-citas" class="view">
+        <div class="toolbar">
+          <div class="filters">
+            <input type="text" id="filter-busqueda" placeholder="Buscar por monitor, ensayo..." class="input-search" />
+            <select id="filter-estado" class="select-filter">
+              <option value="">Todos los estados</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="confirmada">Confirmada</option>
+              <option value="realizada">Realizada</option>
+              <option value="cancelada">Cancelada</option>
+            </select>
+            <select id="filter-ensayo" class="select-filter">
+              <option value="">Todos los ensayos</option>
+            </select>
+            <input type="date" id="filter-fecha-desde" class="input-date" title="Desde" />
+            <input type="date" id="filter-fecha-hasta" class="input-date" title="Hasta" />
+          </div>
+          <button class="btn btn-outline" id="btn-exportar-csv">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            Exportar CSV
+          </button>
+        </div>
+        <div class="table-container">
+          <table id="tabla-citas" class="data-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Hora</th>
+                <th>Monitor</th>
+                <th>Ensayo</th>
+                <th>Tipo de Visita</th>
+                <th>Estado</th>
+                <th>Notas</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-citas">
+              <tr><td colspan="8" class="empty-msg">No hay visitas registradas.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- MONITORES -->
+      <section id="view-monitores" class="view">
+        <div class="toolbar">
+          <input type="text" id="filter-monitor-busqueda" placeholder="Buscar monitor..." class="input-search" />
+          <button class="btn btn-primary" id="btn-nuevo-monitor">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Nuevo Monitor
+          </button>
+        </div>
+        <div class="cards-grid" id="monitores-grid">
+          <p class="empty-msg">No hay monitores registrados.</p>
+        </div>
+      </section>
+
+      <!-- ENSAYOS -->
+      <section id="view-ensayos" class="view">
+        <div class="toolbar">
+          <input type="text" id="filter-ensayo-busqueda" placeholder="Buscar ensayo..." class="input-search" />
+          <select id="filter-ensayo-estado" class="select-filter">
+            <option value="">Todos los estados</option>
+            <option value="activo">Activo</option>
+            <option value="en_pausa">En pausa</option>
+            <option value="cerrado">Cerrado</option>
+          </select>
+          <button class="btn btn-primary" id="btn-nuevo-ensayo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Nuevo Ensayo
+          </button>
+        </div>
+        <div class="table-container">
+          <table id="tabla-ensayos" class="data-table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Nombre del ensayo</th>
+                <th>Promotor</th>
+                <th>Fase</th>
+                <th>Estado</th>
+                <th>Visitas</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-ensayos">
+              <tr><td colspan="7" class="empty-msg">No hay ensayos registrados.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div><!-- fin view-container -->
+  </main>
+
+  <!-- MODAL NUEVA/EDITAR VISITA -->
+  <div id="modal-cita" class="modal-overlay" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-cita-title">Nueva Visita</h2>
+        <button class="modal-close" data-modal="modal-cita">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="form-cita" novalidate>
+          <input type="hidden" id="cita-id" />
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="cita-ensayo">Ensayo *</label>
+              <select id="cita-ensayo" required class="form-control">
+                <option value="">Seleccionar ensayo...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="cita-monitor">Monitor *</label>
+              <select id="cita-monitor" required class="form-control">
+                <option value="">Seleccionar monitor...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="cita-fecha">Fecha *</label>
+              <input type="date" id="cita-fecha" required class="form-control" />
+            </div>
+            <div class="form-group">
+              <label for="cita-hora">Hora *</label>
+              <input type="time" id="cita-hora" required class="form-control" />
+            </div>
+            <div class="form-group">
+              <label for="cita-tipo">Tipo de Visita *</label>
+              <select id="cita-tipo" required class="form-control">
+                <option value="">Seleccionar tipo...</option>
+                <option value="Visita de Inicio">Visita de Inicio</option>
+                <option value="Visita de Monitorización">Visita de Monitorización</option>
+                <option value="Visita de Cierre">Visita de Cierre</option>
+                <option value="Auditoría">Auditoría</option>
+                <option value="Inspección">Inspección</option>
+                <option value="Teleconferencia">Teleconferencia</option>
+                <option value="Otra">Otra</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="cita-estado">Estado *</label>
+              <select id="cita-estado" required class="form-control">
+                <option value="pendiente">Pendiente</option>
+                <option value="confirmada">Confirmada</option>
+                <option value="realizada">Realizada</option>
+                <option value="cancelada">Cancelada</option>
+              </select>
+            </div>
+            <div class="form-group form-group-full">
+              <label for="cita-notas">Notas</label>
+              <textarea id="cita-notas" class="form-control" rows="3" placeholder="Observaciones, documentos solicitados, incidencias..."></textarea>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-modal="modal-cita">Cancelar</button>
+        <button class="btn btn-primary" id="btn-guardar-cita">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL NUEVO/EDITAR MONITOR -->
+  <div id="modal-monitor" class="modal-overlay" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-monitor-title">Nuevo Monitor</h2>
+        <button class="modal-close" data-modal="modal-monitor">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="form-monitor" novalidate>
+          <input type="hidden" id="monitor-id" />
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="monitor-nombre">Nombre *</label>
+              <input type="text" id="monitor-nombre" required class="form-control" placeholder="Nombre" />
+            </div>
+            <div class="form-group">
+              <label for="monitor-apellidos">Apellidos *</label>
+              <input type="text" id="monitor-apellidos" required class="form-control" placeholder="Apellidos" />
+            </div>
+            <div class="form-group">
+              <label for="monitor-empresa">CRO / Empresa</label>
+              <input type="text" id="monitor-empresa" class="form-control" placeholder="Nombre de la CRO o empresa" />
+            </div>
+            <div class="form-group">
+              <label for="monitor-email">Email</label>
+              <input type="email" id="monitor-email" class="form-control" placeholder="correo@ejemplo.com" />
+            </div>
+            <div class="form-group">
+              <label for="monitor-telefono">Teléfono</label>
+              <input type="tel" id="monitor-telefono" class="form-control" placeholder="Teléfono de contacto" />
+            </div>
+            <div class="form-group">
+              <label for="monitor-activo">Estado</label>
+              <select id="monitor-activo" class="form-control">
+                <option value="true">Activo</option>
+                <option value="false">Inactivo</option>
+              </select>
+            </div>
+            <div class="form-group form-group-full">
+              <label for="monitor-notas">Notas</label>
+              <textarea id="monitor-notas" class="form-control" rows="2" placeholder="Observaciones..."></textarea>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-modal="modal-monitor">Cancelar</button>
+        <button class="btn btn-primary" id="btn-guardar-monitor">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL NUEVO/EDITAR ENSAYO -->
+  <div id="modal-ensayo" class="modal-overlay" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-ensayo-title">Nuevo Ensayo</h2>
+        <button class="modal-close" data-modal="modal-ensayo">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="form-ensayo" novalidate>
+          <input type="hidden" id="ensayo-id" />
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="ensayo-codigo">Código / Protocolo *</label>
+              <input type="text" id="ensayo-codigo" required class="form-control" placeholder="Ej: ABC-2024-001" />
+            </div>
+            <div class="form-group">
+              <label for="ensayo-nombre">Nombre del Ensayo *</label>
+              <input type="text" id="ensayo-nombre" required class="form-control" placeholder="Nombre completo o abreviado" />
+            </div>
+            <div class="form-group">
+              <label for="ensayo-promotor">Promotor</label>
+              <input type="text" id="ensayo-promotor" class="form-control" placeholder="Empresa promotora" />
+            </div>
+            <div class="form-group">
+              <label for="ensayo-fase">Fase</label>
+              <select id="ensayo-fase" class="form-control">
+                <option value="">Sin especificar</option>
+                <option value="Fase I">Fase I</option>
+                <option value="Fase II">Fase II</option>
+                <option value="Fase III">Fase III</option>
+                <option value="Fase IV">Fase IV</option>
+                <option value="Observacional">Observacional</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="ensayo-ip">Investigador Principal</label>
+              <input type="text" id="ensayo-ip" class="form-control" placeholder="Nombre del IP" />
+            </div>
+            <div class="form-group">
+              <label for="ensayo-estado">Estado</label>
+              <select id="ensayo-estado" class="form-control">
+                <option value="activo">Activo</option>
+                <option value="en_pausa">En pausa</option>
+                <option value="cerrado">Cerrado</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="ensayo-fecha-inicio">Fecha inicio</label>
+              <input type="date" id="ensayo-fecha-inicio" class="form-control" />
+            </div>
+            <div class="form-group">
+              <label for="ensayo-fecha-fin">Fecha fin prevista</label>
+              <input type="date" id="ensayo-fecha-fin" class="form-control" />
+            </div>
+            <div class="form-group form-group-full">
+              <label for="ensayo-notas">Notas</label>
+              <textarea id="ensayo-notas" class="form-control" rows="2" placeholder="Observaciones, documentos, contactos..."></textarea>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-modal="modal-ensayo">Cancelar</button>
+        <button class="btn btn-primary" id="btn-guardar-ensayo">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL CONFIRMAR BORRADO -->
+  <div id="modal-confirmar" class="modal-overlay" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Confirmar eliminación</h2>
+        <button class="modal-close" data-modal="modal-confirmar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="modal-confirmar-msg">¿Estás seguro de que deseas eliminar este registro?</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" data-modal="modal-confirmar">Cancelar</button>
+        <button class="btn btn-danger" id="btn-confirmar-borrar">Eliminar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICACIONES -->
+  <div id="toast-container"></div>
+
+  <!-- SCRIPTS -->
+  <script src="js/modules/data.js"></script>
+  <script src="js/modules/ui.js"></script>
+  <script src="js/modules/visitas.js"></script>
+  <script src="js/modules/monitores.js"></script>
+  <script src="js/modules/ensayos.js"></script>
+  <script src="js/modules/dashboard.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

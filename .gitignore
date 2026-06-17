@@ -1,0 +1,13 @@
+# Base de datos local (no subir a GitHub)
+data/*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
