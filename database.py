@@ -348,9 +348,12 @@ def delete_ensayo(eid):
 
 # ── MONITORES ─────────────────────────────────────────────────────────────────
 
-def get_monitores(texto=''):
+def get_monitores(texto='', ensayo_id=None):
     rows = _fetch_all("monitores")
     texto_n = _norm_text(texto)
+
+    if ensayo_id is not None:
+        rows = [r for r in rows if r.get("ensayo_id") == ensayo_id]
 
     if texto_n:
         def match_row(r):
@@ -376,6 +379,10 @@ def create_monitor(data):
 
 
 def update_monitor(mid, data):
+    # No permitir cambiar ensayo_id
+    original = _get_by_id("monitores", mid)
+    if original and data.get("ensayo_id") != original.get("ensayo_id"):
+        raise ValueError("No se puede cambiar el ensayo de un monitor una vez creado.")
     _update_row_by_id("monitores", mid, data)
 
 

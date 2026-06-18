@@ -213,17 +213,20 @@ with st.sidebar:
 @st.dialog("Nueva Visita", width="large")
 def dialog_nueva_visita():
     ensayos   = get_ensayos()
-    monitores = get_monitores()
     if not ensayos:
         st.warning("⚠️ Primero debes crear al menos un **Ensayo** en la sección correspondiente.")
-        return
-    if not monitores:
-        st.warning("⚠️ Primero debes crear al menos un **Monitor** en la sección correspondiente.")
         return
 
     with st.form("form_nueva_visita"):
         c1, c2 = st.columns(2)
         ei = c1.selectbox("Ensayo *", range(len(ensayos)), format_func=lambda i: elabel(ensayos[i]))
+        ensayo_id_sel = ensayos[ei]["id"]
+        
+        monitores = get_monitores(ensayo_id=ensayo_id_sel)
+        if not monitores:
+            st.warning(f"⚠️ No hay monitores asociados a este ensayo. Crea uno primero.")
+            return
+        
         mi = c2.selectbox("Monitor *", range(len(monitores)), format_func=lambda i: mlabel(monitores[i]))
 
         c3, c4 = st.columns(2)
@@ -240,7 +243,7 @@ def dialog_nueva_visita():
         if st.form_submit_button("💾 Guardar visita", use_container_width=True, type="primary"):
             try:
                 create_visita({
-                    "ensayo_id":  ensayos[ei]["id"],
+                    "ensayo_id":  ensayo_id_sel,
                     "monitor_id": monitores[mi]["id"],
                     "fecha":      fecha.isoformat(),
                     "hora":       hora_val.strftime("%H:%M"),
@@ -263,10 +266,11 @@ def dialog_editar_visita(visita_id: int):
         return
 
     ensayos   = get_ensayos()
-    monitores = get_monitores()
     e_ids = [e["id"] for e in ensayos]
-    m_ids = [m["id"] for m in monitores]
     e_idx = e_ids.index(v["ensayo_id"])  if v["ensayo_id"]  in e_ids else 0
+    
+    monitores = get_monitores(ensayo_id=v["ensayo_id"])
+    m_ids = [m["id"] for m in monitores]
     m_idx = m_ids.index(v["monitor_id"]) if v["monitor_id"] in m_ids else 0
     hora_default = datetime.strptime(v["hora"], "%H:%M").time() if v["hora"] else datetime.strptime("09:00", "%H:%M").time()
 
@@ -310,7 +314,14 @@ def dialog_editar_visita(visita_id: int):
 
 @st.dialog("Nuevo Monitor", width="large")
 def dialog_nuevo_monitor():
+    ensayos = get_ensayos()
+    if not ensayos:
+        st.warning("⚠️ Primero debes crear al menos un **Ensayo**.")
+        return
+
     with st.form("form_nuevo_monitor"):
+        ei = st.selectbox("Ensayo *", range(len(ensayos)), format_func=lambda i: elabel(ensayos[i]))
+
         c1, c2 = st.columns(2)
         nombre    = c1.text_input("Nombre *")
         apellidos = c2.text_input("Apellidos *")
@@ -337,6 +348,7 @@ def dialog_nuevo_monitor():
                 "empresa": empresa.strip(), "email": email.strip(),
                 "telefono": telefono.strip(), "activo": 1 if activo else 0,
                 "notas": notas.strip(),
+                "ensayo_id": ensayos[ei]["id"],
             })
             st.success("✅ Monitor creado.")
             st.rerun()
@@ -349,7 +361,16 @@ def dialog_editar_monitor(monitor_id: int):
         st.error("Monitor no encontrado.")
         return
 
+    ensayos = get_ensayos()
+    ensayo_nombre = ""
+    for e in ensayos:
+        if e["id"] == m.get("ensayo_id"):
+            ensayo_nombre = elabel(e)
+            break
+
     with st.form("form_editar_monitor"):
+        st.info(f"Asociado a: **{ensayo_nombre}** (no se puede cambiar)")
+
         c1, c2 = st.columns(2)
         nombre    = c1.text_input("Nombre *",    value=m["nombre"])
         apellidos = c2.text_input("Apellidos *", value=m["apellidos"])
@@ -377,6 +398,7 @@ def dialog_editar_monitor(monitor_id: int):
                 "empresa": empresa.strip(), "email": email.strip(),
                 "telefono": telefono.strip(), "activo": 1 if activo else 0,
                 "notas": notas.strip(),
+                "ensayo_id": m.get("ensayo_id"),  # Mantener el ensayo original
             })
             st.success("✅ Monitor actualizado.")
             st.rerun()
@@ -619,9 +641,24 @@ def page_monitores():
     if col_btn.button("➕ Nuevo Monitor", use_container_width=True, type="primary"):
         dialog_nuevo_monitor()
 
-    f_texto = st.text_input("🔍 Buscar", placeholder="Nombre, apellidos, empresa...",
+    ensayos = get_ensayos()
+    c1, c2 = st.columns([2, 3])
+    
+    if ensayos:
+        ensayo_opts = {e["id"]: elabel(e) for e in ensayos}
+        ensayo_id = c1.selectbox(
+            "Filtrar por ensayo",
+            [None] + list(ensayo_opts.keys()),
+            format_func=lambda x: ensayo_opts.get(x, "Todos los ensayos"),
+            label_visibility="collapsed",
+        )
+    else:
+        c1.warning("No hay ensayos. Crea uno primero.")
+        ensayo_id = None
+
+    f_texto = c2.text_input("🔍 Buscar", placeholder="Nombre, apellidos, empresa...",
                              label_visibility="collapsed")
-    monitores = get_monitores(texto=f_texto)
+    monitores = get_monitores(texto=f_texto, ensayo_id=ensayo_id)
 
     if not monitores:
         msg = "No hay monitores registrados." if not f_texto else "No hay monitores que coincidan."
