@@ -11,9 +11,9 @@ from database import (
     init_db, get_backend_name,
     get_ensayos, get_ensayo_by_id, create_ensayo, update_ensayo, delete_ensayo,
     get_monitores, get_monitor_by_id, create_monitor, update_monitor, delete_monitor,
-    get_visitas_df, get_visita_by_id, create_visita, update_visita, delete_visita,
+    get_visitas_df, get_visita_by_id, create_visita, create_visitas_rango, update_visita, delete_visita,
     get_stats, get_proximas_visitas, get_resumen_por_ensayo,
-    get_dias_bloqueados, bloquear_dia, desbloquear_dia, get_visitas_count_by_date,
+    get_dias_bloqueados, bloquear_dia, bloquear_rango, desbloquear_dia, desbloquear_rango, get_visitas_count_by_date,
 )
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
@@ -195,34 +195,66 @@ def render_calendario_general(section_key: str):
 
     st.caption("Leyenda: Libre (sin bloqueo), Bloqueado (0 visitas), Solo 1 visita, Normal (2 visitas).")
 
-    b1, b2, b3, b4, b5 = st.columns([2, 2, 1, 1, 1])
-    fecha_bloqueo = b1.date_input("Dia a bloquear", value=date.today(), key=f"{section_key}_fecha_bloqueo")
-    max_visitas = b2.selectbox(
+    # Opción de rango de fechas para bloqueos
+    col_rango_bloqueo = st.columns(1)[0]
+    es_rango_bloqueo = col_rango_bloqueo.checkbox("Bloquear un rango de fechas", value=False, key=f"{section_key}_rango_check")
+    
+    if es_rango_bloqueo:
+        b1, b2 = st.columns(2)
+        fecha_bloqueo_desde = b1.date_input("Desde", value=date.today(), key=f"{section_key}_fecha_desde")
+        fecha_bloqueo_hasta = b2.date_input("Hasta", value=date.today(), key=f"{section_key}_fecha_hasta")
+    else:
+        b1 = st.columns(1)[0]
+        fecha_bloqueo = b1.date_input("Día a bloquear", value=date.today(), key=f"{section_key}_fecha_bloqueo")
+    
+    b_cols = st.columns([2, 1, 1, 1])
+    max_visitas = b_cols[0].selectbox(
         "Máximo de visitas",
         [2, 1, 0],
         format_func=lambda x: f"{x} visita(s)" if x > 0 else "Bloqueado",
         key=f"{section_key}_max_visitas"
     )
-    motivo_bloqueo = b3.text_input("Motivo", placeholder="Opcional", key=f"{section_key}_motivo_bloqueo")
+    motivo_bloqueo = st.text_input("Motivo", placeholder="Opcional", key=f"{section_key}_motivo_bloqueo")
     
-    if b4.button("Bloquear", use_container_width=True, key=f"{section_key}_bloquear"):
+    col_btn = st.columns([1, 1])
+    if col_btn[0].button("Bloquear", use_container_width=True, key=f"{section_key}_bloquear"):
         try:
             # Guardar max_visitas en el campo motivo como "max:X"
             motivo = f"max:{max_visitas}"
             if motivo_bloqueo.strip():
                 motivo += f" - {motivo_bloqueo.strip()}"
-            bloquear_dia(fecha_bloqueo.isoformat(), motivo)
-            st.success(f"Dia bloqueado (máximo {max_visitas} visita(s)).")
-            st.rerun()
+            
+            if es_rango_bloqueo:
+                if fecha_bloqueo_desde > fecha_bloqueo_hasta:
+                    st.error("La fecha inicial no puede ser mayor que la fecha final.")
+                else:
+                    bloquear_rango(fecha_bloqueo_desde.isoformat(), fecha_bloqueo_hasta.isoformat(), motivo)
+                    dias_bloqueados = (fecha_bloqueo_hasta - fecha_bloqueo_desde).days + 1
+                    st.success(f"Rango de {dias_bloqueados} días bloqueado.")
+                    st.rerun()
+            else:
+                bloquear_dia(fecha_bloqueo.isoformat(), motivo)
+                st.success(f"Día bloqueado (máximo {max_visitas} visita(s)).")
+                st.rerun()
         except Exception as ex:
-            st.error(f"No se pudo bloquear el dia: {ex}")
-    if b5.button("Desbloquear", use_container_width=True, key=f"{section_key}_desbloquear"):
+            st.error(f"No se pudo bloquear: {ex}")
+    
+    if col_btn[1].button("Desbloquear", use_container_width=True, key=f"{section_key}_desbloquear"):
         try:
-            desbloquear_dia(fecha_bloqueo.isoformat())
-            st.success("Dia desbloqueado.")
-            st.rerun()
+            if es_rango_bloqueo:
+                if fecha_bloqueo_desde > fecha_bloqueo_hasta:
+                    st.error("La fecha inicial no puede ser mayor que la fecha final.")
+                else:
+                    desbloquear_rango(fecha_bloqueo_desde.isoformat(), fecha_bloqueo_hasta.isoformat())
+                    dias_desbloqueados = (fecha_bloqueo_hasta - fecha_bloqueo_desde).days + 1
+                    st.success(f"Rango de {dias_desbloqueados} días desbloqueado.")
+                    st.rerun()
+            else:
+                desbloquear_dia(fecha_bloqueo.isoformat())
+                st.success("Día desbloqueado.")
+                st.rerun()
         except Exception as ex:
-            st.error(f"No se pudo desbloquear el dia: {ex}")
+            st.error(f"No se pudo desbloquear: {ex}")
 
     bloqueados_mes = [r for r in bloqueados_rows if r.get("fecha", "").startswith(f"{anio:04d}-{mes:02d}-")]
     if bloqueados_mes:
@@ -297,9 +329,19 @@ def dialog_nueva_visita():
             mi = st.selectbox("Monitor *", range(len(monitores)), format_func=lambda i: mlabel(monitores[i]))
             monitor_id_sel = monitores[mi]["id"]
 
-        c3, c4 = st.columns(2)
-        fecha     = c3.date_input("Fecha *", value=date.today())
-        hora_val  = c4.time_input("Hora", value=datetime.strptime("09:00", "%H:%M").time(), step=900)
+        # Opción de rango de fechas
+        col_rango = st.columns(1)[0]
+        es_rango = col_rango.checkbox("Crear visitas para un rango de fechas", value=False, key="visita_rango_check")
+        
+        if es_rango:
+            c3, c4 = st.columns(2)
+            fecha_desde = c3.date_input("Desde *", value=date.today(), key="visita_desde")
+            fecha_hasta = c4.date_input("Hasta *", value=date.today(), key="visita_hasta")
+            hora_val = st.time_input("Hora", value=datetime.strptime("09:00", "%H:%M").time(), step=900)
+        else:
+            c3, c4 = st.columns(2)
+            fecha = c3.date_input("Fecha *", value=date.today())
+            hora_val = c4.time_input("Hora", value=datetime.strptime("09:00", "%H:%M").time(), step=900)
 
         c5, c6 = st.columns(2)
         tipo   = c5.selectbox("Tipo de visita *", TIPOS_VISITA)
@@ -308,21 +350,35 @@ def dialog_nueva_visita():
         notas = st.text_area("Notas", height=80,
                              placeholder="Observaciones, documentos solicitados, incidencias...")
 
-        if st.form_submit_button("💾 Guardar visita", use_container_width=True, type="primary"):
+        if st.form_submit_button("💾 Guardar visita(s)", use_container_width=True, type="primary"):
             try:
-                create_visita({
-                    "ensayo_id":  ensayo_id_sel,
-                    "monitor_id": monitor_id_sel,
-                    "fecha":      fecha.isoformat(),
-                    "hora":       hora_val.strftime("%H:%M"),
-                    "tipo":       tipo,
-                    "estado":     estado,
-                    "notas":      notas.strip(),
-                })
+                if es_rango:
+                    if fecha_desde > fecha_hasta:
+                        st.error("La fecha inicial no puede ser mayor que la fecha final.")
+                        return
+                    count = create_visitas_rango({
+                        "ensayo_id":  ensayo_id_sel,
+                        "monitor_id": monitor_id_sel,
+                        "hora":       hora_val.strftime("%H:%M"),
+                        "tipo":       tipo,
+                        "estado":     estado,
+                        "notas":      notas.strip(),
+                    }, fecha_desde.isoformat(), fecha_hasta.isoformat())
+                    st.success(f"✅ {count} visita(s) registrada(s) correctamente.")
+                else:
+                    create_visita({
+                        "ensayo_id":  ensayo_id_sel,
+                        "monitor_id": monitor_id_sel,
+                        "fecha":      fecha.isoformat(),
+                        "hora":       hora_val.strftime("%H:%M"),
+                        "tipo":       tipo,
+                        "estado":     estado,
+                        "notas":      notas.strip(),
+                    })
+                    st.success("✅ Visita registrada correctamente.")
             except ValueError as ex:
                 st.error(str(ex))
                 return
-            st.success("✅ Visita registrada correctamente.")
             st.rerun()
 
 

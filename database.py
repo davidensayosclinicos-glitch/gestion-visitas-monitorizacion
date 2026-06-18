@@ -3,7 +3,7 @@ database.py — Capa de acceso a datos (PostgreSQL/Supabase)
 Gestion de Visitas de Monitorizacion — Ensayos Clinicos
 """
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -304,6 +304,28 @@ def get_dias_bloqueados(desde='', hasta=''):
         rows = query.execute().data or []
     rows.sort(key=lambda r: _norm_text(r.get("fecha")))
     return rows
+
+
+def bloquear_rango(fecha_desde, fecha_hasta, motivo=''):
+    """Bloquea un rango de fechas (inclusive)"""
+    from_date = datetime.fromisoformat(fecha_desde).date() if isinstance(fecha_desde, str) else fecha_desde
+    to_date = datetime.fromisoformat(fecha_hasta).date() if isinstance(fecha_hasta, str) else fecha_hasta
+    
+    current_date = from_date
+    while current_date <= to_date:
+        bloquear_dia(current_date.isoformat(), motivo)
+        current_date += timedelta(days=1)
+
+
+def desbloquear_rango(fecha_desde, fecha_hasta):
+    """Desbloquea un rango de fechas (inclusive)"""
+    from_date = datetime.fromisoformat(fecha_desde).date() if isinstance(fecha_desde, str) else fecha_desde
+    to_date = datetime.fromisoformat(fecha_hasta).date() if isinstance(fecha_hasta, str) else fecha_hasta
+    
+    current_date = from_date
+    while current_date <= to_date:
+        desbloquear_dia(current_date.isoformat())
+        current_date += timedelta(days=1)
 
 
 def bloquear_dia(fecha, motivo=''):
@@ -667,6 +689,28 @@ def get_visitas_df(texto='', estado='', ensayo_id=None, desde='', hasta=''):
 
 def get_visita_by_id(vid):
     return _get_by_id("visitas", vid)
+
+
+def create_visitas_rango(data, fecha_desde, fecha_hasta):
+    """Crea visitas para un rango de fechas (inclusive).
+    
+    data: diccionario con los datos de la visita (sin fecha)
+    fecha_desde: fecha inicial (YYYY-MM-DD o date object)
+    fecha_hasta: fecha final (YYYY-MM-DD o date object)
+    """
+    from_date = datetime.fromisoformat(fecha_desde).date() if isinstance(fecha_desde, str) else fecha_desde
+    to_date = datetime.fromisoformat(fecha_hasta).date() if isinstance(fecha_hasta, str) else fecha_hasta
+    
+    current_date = from_date
+    created_count = 0
+    while current_date <= to_date:
+        visit_data = dict(data)
+        visit_data["fecha"] = current_date.isoformat()
+        create_visita(visit_data)
+        created_count += 1
+        current_date += timedelta(days=1)
+    
+    return created_count
 
 
 def create_visita(data):
