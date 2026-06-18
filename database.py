@@ -379,10 +379,29 @@ def _validar_limites_visita(fecha, monitor_id, exclude_visita_id=None):
     if monitor_id is None:
         raise ValueError("El monitor de la visita es obligatorio.")
 
-    bloqueados = {d.get("fecha") for d in get_dias_bloqueados(desde=fecha, hasta=fecha)}
-    if fecha in bloqueados:
-        raise ValueError("No se puede registrar la visita: el dia esta bloqueado.")
+    # Buscar bloqueos personalizados para este día (con máximo de visitas)
+    dias_bloq = get_dias_bloqueados(desde=fecha, hasta=fecha)
+    max_visitas_dia = MAX_VISITAS_POR_DIA  # default global
+    
+    for bloqueo in dias_bloq:
+        if bloqueo.get("fecha") == fecha:
+            motivo = bloqueo.get("motivo", "")
+            # Parsear formato "max:X" o "max:X - comentario"
+            if motivo.startswith("max:"):
+                try:
+                    max_visitas_dia = int(motivo.split(":")[1].split()[0].split("-")[0])
+                except (ValueError, IndexError):
+                    max_visitas_dia = 0  # Si no se puede parsear, bloquear completamente
+            else:
+                # Bloqueo total (sin especificar max, asumir 0)
+                max_visitas_dia = 0
+            break
 
+    # Si max_visitas_dia es 0, día bloqueado completamente
+    if max_visitas_dia == 0:
+        raise ValueError("No se puede registrar la visita: el día está bloqueado.")
+
+    # Contar visitas en el día
     if _using_postgres():
         with _pg_conn().cursor() as cur:
             cur.execute("select id from visitas where fecha = %s", [fecha])
@@ -392,8 +411,9 @@ def _validar_limites_visita(fecha, monitor_id, exclude_visita_id=None):
     if exclude_visita_id is not None:
         rows = [r for r in rows if r.get("id") != exclude_visita_id]
 
-    if len(rows) >= MAX_VISITAS_POR_DIA:
-        raise ValueError(f"No se puede registrar la visita: maximo {MAX_VISITAS_POR_DIA} visitas por dia.")
+    # Comprobar límite de visitas del día
+    if len(rows) >= max_visitas_dia:
+        raise ValueError(f"No se puede registrar la visita: máximo {max_visitas_dia} visita(s) por día.")
 
     # Bloqueo parcial: un mismo monitor no puede tener más de una visita por día.
     if _using_postgres():
@@ -422,7 +442,6 @@ def _validar_limites_visita(fecha, monitor_id, exclude_visita_id=None):
         raise ValueError(
             "No se puede registrar la visita: este monitor ya tiene una visita asignada en esa fecha."
         )
-
 
 def init_db():
     # Verifica conectividad y tablas requeridas.

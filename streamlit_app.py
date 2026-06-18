@@ -120,10 +120,25 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
             is_blocked = f in bloqueados
             in_current_month = day.month == month
 
+            # Determinar máximo de visitas permitidas para este día
+            max_visitas_dia = 2  # default global
             if is_blocked:
+                motivo = bloqueados[f]
+                # Parsear "max:X" o "max:X - comentario"
+                if motivo.startswith("max:"):
+                    try:
+                        max_visitas_dia = int(motivo.split(":")[1].split()[0].split("-")[0])
+                    except (ValueError, IndexError):
+                        max_visitas_dia = 0  # Si no se puede parsear, bloqueo total
+
+            # Asignar clase CSS según estado
+            if is_blocked and max_visitas_dia == 0:
                 cls = "gvm-state-locked"
                 chip = "Bloqueado"
-            elif n >= 2:
+            elif is_blocked and max_visitas_dia == 1:
+                cls = "gvm-state-mid"
+                chip = "Max 1 visita"
+            elif n >= max_visitas_dia and max_visitas_dia > 0:
                 cls = "gvm-state-full"
                 chip = f"{n} visitas"
             elif n == 1:
@@ -178,19 +193,30 @@ def render_calendario_general(section_key: str):
         st.caption(f"Detalle técnico: {ex}")
         bloqueados_rows = []
 
-    st.caption("Leyenda: Libre (0), 1 visita, 2 visitas o mas (no permite nuevas), Bloqueado.")
+    st.caption("Leyenda: Libre (sin bloqueo), Bloqueado (0 visitas), Solo 1 visita, Normal (2 visitas).")
 
-    b1, b2, b3, b4 = st.columns([2, 3, 1, 1])
+    b1, b2, b3, b4, b5 = st.columns([2, 2, 1, 1, 1])
     fecha_bloqueo = b1.date_input("Dia a bloquear", value=date.today(), key=f"{section_key}_fecha_bloqueo")
-    motivo_bloqueo = b2.text_input("Motivo (opcional)", key=f"{section_key}_motivo_bloqueo")
-    if b3.button("Bloquear", use_container_width=True, key=f"{section_key}_bloquear"):
+    max_visitas = b2.selectbox(
+        "Máximo de visitas",
+        [2, 1, 0],
+        format_func=lambda x: f"{x} visita(s)" if x > 0 else "Bloqueado",
+        key=f"{section_key}_max_visitas"
+    )
+    motivo_bloqueo = b3.text_input("Motivo", placeholder="Opcional", key=f"{section_key}_motivo_bloqueo")
+    
+    if b4.button("Bloquear", use_container_width=True, key=f"{section_key}_bloquear"):
         try:
-            bloquear_dia(fecha_bloqueo.isoformat(), motivo_bloqueo)
-            st.success("Dia bloqueado.")
+            # Guardar max_visitas en el campo motivo como "max:X"
+            motivo = f"max:{max_visitas}"
+            if motivo_bloqueo.strip():
+                motivo += f" - {motivo_bloqueo.strip()}"
+            bloquear_dia(fecha_bloqueo.isoformat(), motivo)
+            st.success(f"Dia bloqueado (máximo {max_visitas} visita(s)).")
             st.rerun()
         except Exception as ex:
             st.error(f"No se pudo bloquear el dia: {ex}")
-    if b4.button("Desbloquear", use_container_width=True, key=f"{section_key}_desbloquear"):
+    if b5.button("Desbloquear", use_container_width=True, key=f"{section_key}_desbloquear"):
         try:
             desbloquear_dia(fecha_bloqueo.isoformat())
             st.success("Dia desbloqueado.")
@@ -201,8 +227,24 @@ def render_calendario_general(section_key: str):
     bloqueados_mes = [r for r in bloqueados_rows if r.get("fecha", "").startswith(f"{anio:04d}-{mes:02d}-")]
     if bloqueados_mes:
         df_b = pd.DataFrame(bloqueados_mes)
-        df_b = df_b.rename(columns={"fecha": "Fecha", "motivo": "Motivo"})
-        st.dataframe(df_b, use_container_width=True, hide_index=True)
+        # Parsear máximo de visitas del motivo
+        def parse_max_visitas(motivo):
+            if not motivo or not motivo.startswith("max:"):
+                return "Bloqueado"
+            try:
+                max_v = int(motivo.split(":")[1].split()[0].split("-")[0])
+                if max_v == 0:
+                    return "Bloqueado (0)"
+                elif max_v == 1:
+                    return "Reducido (1)"
+                else:
+                    return "Normal (2)"
+            except (ValueError, IndexError):
+                return "Bloqueado"
+        
+        df_b["max_visitas"] = df_b["motivo"].apply(parse_max_visitas)
+        df_b = df_b.rename(columns={"fecha": "Fecha", "motivo": "Detalle", "max_visitas": "Máximo"})
+        st.dataframe(df_b[["Fecha", "Máximo", "Detalle"]], use_container_width=True, hide_index=True)
     else:
         st.info("No hay dias bloqueados en este mes.")
 
