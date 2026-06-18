@@ -195,3 +195,51 @@ streamlit run streamlit_app.py
 Si funciona localmente pero no en Streamlit Cloud, el problema es la configuración de Secrets.
 
 Si no estan las variables necesarias, la app mostrara un error de configuracion al iniciar.
+
+## 8) Rangos de Fechas (Visitas y Bloqueos)
+
+### Crear Visitas en Rango
+
+En la sección "Visitas", puedes activar el checkbox **"Crear visitas para un rango de fechas"** para:
+- Especificar una fecha inicial ("Desde") y una fecha final ("Hasta")
+- Crear automáticamente una visita por cada día en el rango
+- Las validaciones se aplican a cada día (máximo de visitas, bloqueo parcial del monitor)
+
+**Ejemplo**: Para crear visitas de lunes a viernes (5 días) para el monitor X en el Ensayo Y, solo necesitas:
+1. Seleccionar el Ensayo y Monitor
+2. Activar el checkbox "Crear visitas para un rango de fechas"
+3. Especificar desde el lunes hasta el viernes
+4. Click en "Guardar visita(s)"
+
+### Bloquear/Desbloquear Rangos
+
+En la sección "Bloqueos", puedes activar el checkbox **"Bloquear un rango de fechas"** para:
+- Especificar una fecha inicial ("Desde") y una fecha final ("Hasta")
+- Bloquear automáticamente todos los días en el rango con el mismo máximo de visitas
+- El máximo de visitas se configura en el selectbox:
+  - **0 visitas**: Día completamente bloqueado (no se puede registrar ninguna visita)
+  - **1 visita**: Día con límite reducido (máximo 1 visita en lugar del global de 2)
+  - **2 visitas**: Día sin restricción especial (usa el máximo global de 2)
+
+**Ejemplo**: Para reducir a 1 visita por día toda una semana de baja demanda:
+1. Activar "Bloquear un rango de fechas"
+2. Especificar desde el lunes hasta el domingo
+3. Seleccionar "1 visita(s)" en el máximo
+4. Agregar motivo: "Baja demanda"
+5. Click en "Bloquear"
+
+### Almacenamiento en Base de Datos
+
+Los rangos se almacenan como registros individuales por día en la tabla `dias_bloqueados`:
+- Cada día del rango obtiene su propio registro
+- El campo `motivo` contiene el formato: `max:X - comentario_opcional`
+- Ejemplo: Un bloqueo de 3 días crea 3 registros (uno por día) en la tabla
+
+### Funciones en Backend
+
+**Database.py**:
+- `create_visitas_rango(data, fecha_desde, fecha_hasta)`: Crea visitas para múltiples días
+- `bloquear_rango(fecha_desde, fecha_hasta, motivo)`: Bloquea múltiples días
+- `desbloquear_rango(fecha_desde, fecha_hasta)`: Desbloquea múltiples días
+
+Las funciones manejan fechas en formato ISO (YYYY-MM-DD) o como objetos `datetime.date`.
