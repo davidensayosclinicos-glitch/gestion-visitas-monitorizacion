@@ -25,7 +25,16 @@ st.set_page_config(
     menu_items={"About": "Gestión de Visitas de Monitorización — Ensayos Clínicos"},
 )
 
-init_db()
+try:
+    init_db()
+except RuntimeError as ex:
+    st.error("No se pudo inicializar la base de datos.")
+    st.info(
+        "Configura en Streamlit Cloud los secrets SUPABASE_URL y SUPABASE_KEY, "
+        "y verifica tablas/permisos en Supabase."
+    )
+    st.caption(f"Detalle: {ex}")
+    st.stop()
 
 # ── CONSTANTES ────────────────────────────────────────────────────────────────
 ESTADOS_VISITA = ["pendiente", "confirmada", "realizada", "cancelada"]
