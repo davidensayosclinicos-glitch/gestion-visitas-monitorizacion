@@ -373,9 +373,11 @@ def get_visitas_count_by_date(desde='', hasta=''):
     return out
 
 
-def _validar_limites_visita(fecha, exclude_visita_id=None):
+def _validar_limites_visita(fecha, monitor_id, exclude_visita_id=None):
     if not fecha:
         raise ValueError("La fecha de la visita es obligatoria.")
+    if monitor_id is None:
+        raise ValueError("El monitor de la visita es obligatorio.")
 
     bloqueados = {d.get("fecha") for d in get_dias_bloqueados(desde=fecha, hasta=fecha)}
     if fecha in bloqueados:
@@ -392,6 +394,34 @@ def _validar_limites_visita(fecha, exclude_visita_id=None):
 
     if len(rows) >= MAX_VISITAS_POR_DIA:
         raise ValueError(f"No se puede registrar la visita: maximo {MAX_VISITAS_POR_DIA} visitas por dia.")
+
+    # Bloqueo parcial: un mismo monitor no puede tener más de una visita por día.
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                "select id from visitas where fecha = %s and monitor_id = %s",
+                [fecha, monitor_id],
+            )
+            same_monitor_rows = cur.fetchall() or []
+    else:
+        same_monitor_rows = (
+            _sb()
+            .table("visitas")
+            .select("id")
+            .eq("fecha", fecha)
+            .eq("monitor_id", monitor_id)
+            .execute()
+            .data
+            or []
+        )
+
+    if exclude_visita_id is not None:
+        same_monitor_rows = [r for r in same_monitor_rows if r.get("id") != exclude_visita_id]
+
+    if same_monitor_rows:
+        raise ValueError(
+            "No se puede registrar la visita: este monitor ya tiene una visita asignada en esa fecha."
+        )
 
 
 def init_db():
@@ -621,12 +651,16 @@ def get_visita_by_id(vid):
 
 
 def create_visita(data):
-    _validar_limites_visita(data.get("fecha", ""))
+    _validar_limites_visita(data.get("fecha", ""), data.get("monitor_id"))
     _insert_row("visitas", data)
 
 
 def update_visita(vid, data):
-    _validar_limites_visita(data.get("fecha", ""), exclude_visita_id=vid)
+    _validar_limites_visita(
+        data.get("fecha", ""),
+        data.get("monitor_id"),
+        exclude_visita_id=vid,
+    )
     data = dict(data)
     data["actualizado_en"] = datetime.utcnow().isoformat()
     _update_row_by_id("visitas", vid, data)
