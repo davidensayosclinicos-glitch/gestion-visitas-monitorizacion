@@ -50,7 +50,31 @@ def _pg_conn():
     if psycopg is None:
         raise RuntimeError("Falta la dependencia 'psycopg'. Ejecuta: pip install psycopg[binary]")
     if _PG_CONN is None or _PG_CONN.closed:
-        _PG_CONN = psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True)
+        try:
+            _PG_CONN = psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True)
+        except psycopg.OperationalError as ex:
+            error_msg = str(ex).lower()
+            if "authentication failed" in error_msg or "password authentication" in error_msg:
+                raise RuntimeError(
+                    "❌ Error de autenticación: Contraseña o usuario incorrecto en DATABASE_URL.\n"
+                    "Verifica que DATABASE_URL esté configurado correctamente en Streamlit Cloud secrets."
+                ) from ex
+            elif "could not translate host name" in error_msg or "nodename nor servname provided" in error_msg:
+                raise RuntimeError(
+                    "❌ Error de conexión: No se puede resolver el host de PostgreSQL.\n"
+                    "Verifica que el DATABASE_URL sea válido y el servidor sea accesible."
+                ) from ex
+            elif "connection refused" in error_msg:
+                raise RuntimeError(
+                    "❌ Conexión rechazada: El servidor PostgreSQL no responde.\n"
+                    "Verifica que el servidor esté ejecutándose y accesible."
+                ) from ex
+            else:
+                raise RuntimeError(
+                    f"❌ Error al conectar a PostgreSQL: {error_msg}\n"
+                    "Verifica que DATABASE_URL esté configurado correctamente en Streamlit Cloud.\n"
+                    "Debe tener formato: postgresql://usuario:contraseña@host:puerto/basedatos"
+                ) from ex
     return _PG_CONN
 
 

@@ -28,12 +28,28 @@ st.set_page_config(
 try:
     init_db()
 except RuntimeError as ex:
-    st.error("No se pudo inicializar la base de datos.")
-    st.info(
-        "Configura DATABASE_URL (PostgreSQL directo) o SUPABASE_URL/SUPABASE_KEY, "
-        "y verifica tablas/permisos en Supabase."
-    )
-    st.caption(f"Detalle: {ex}")
+    st.error(str(ex))
+    st.divider()
+    st.subheader("Cómo configurar")
+    with st.expander("📋 Para PostgreSQL directo (DATABASE_URL)", expanded=True):
+        st.markdown("""
+        **En Streamlit Cloud:**
+        1. Abre tu app → **Manage app** (esquina inferior derecha)
+        2. Ve a **Secrets** 
+        3. Agrega:
+        ```
+        DATABASE_URL="postgresql://usuario:contraseña@host:5432/nombre_bd"
+        ```
+        4. Haz refresh de la app
+        """)
+    with st.expander("☁️ Para Supabase API (SUPABASE_URL + SUPABASE_KEY)"):
+        st.markdown("""
+        **En Streamlit Cloud → Secrets:**
+        ```
+        SUPABASE_URL="https://xxxx.supabase.co"
+        SUPABASE_KEY="your-api-key"
+        ```
+        """)
     st.stop()
 
 # ── CONSTANTES ────────────────────────────────────────────────────────────────
