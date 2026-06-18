@@ -240,16 +240,20 @@ def dialog_nueva_visita():
         return
 
     with st.form("form_nueva_visita"):
-        c1, c2 = st.columns(2)
-        ei = c1.selectbox("Ensayo *", range(len(ensayos)), format_func=lambda i: elabel(ensayos[i]))
+        ei = st.selectbox("Ensayo *", range(len(ensayos)), format_func=lambda i: elabel(ensayos[i]))
         ensayo_id_sel = ensayos[ei]["id"]
         
         monitores = get_monitores(ensayo_id=ensayo_id_sel)
         if not monitores:
-            st.warning(f"⚠️ No hay monitores asociados a este ensayo. Crea uno primero.")
+            st.warning(f"⚠️ No hay monitores asociados a este ensayo. Crea uno en la sección **Monitores**.")
             return
         
-        mi = c2.selectbox("Monitor *", range(len(monitores)), format_func=lambda i: mlabel(monitores[i]))
+        monitor_id_sel = monitores[0]["id"]
+        if len(monitores) == 1:
+            st.info(f"📍 Monitor asignado: **{mlabel(monitores[0])}**")
+        else:
+            mi = st.selectbox("Monitor *", range(len(monitores)), format_func=lambda i: mlabel(monitores[i]))
+            monitor_id_sel = monitores[mi]["id"]
 
         c3, c4 = st.columns(2)
         fecha     = c3.date_input("Fecha *", value=date.today())
@@ -266,7 +270,7 @@ def dialog_nueva_visita():
             try:
                 create_visita({
                     "ensayo_id":  ensayo_id_sel,
-                    "monitor_id": monitores[mi]["id"],
+                    "monitor_id": monitor_id_sel,
                     "fecha":      fecha.isoformat(),
                     "hora":       hora_val.strftime("%H:%M"),
                     "tipo":       tipo,
@@ -297,9 +301,21 @@ def dialog_editar_visita(visita_id: int):
     hora_default = datetime.strptime(v["hora"], "%H:%M").time() if v["hora"] else datetime.strptime("09:00", "%H:%M").time()
 
     with st.form("form_editar_visita"):
-        c1, c2 = st.columns(2)
-        ei = c1.selectbox("Ensayo *",   range(len(ensayos)),   index=e_idx, format_func=lambda i: elabel(ensayos[i]))
-        mi = c2.selectbox("Monitor *",  range(len(monitores)), index=m_idx, format_func=lambda i: mlabel(monitores[i]))
+        ei = st.selectbox("Ensayo *",   range(len(ensayos)),   index=e_idx, format_func=lambda i: elabel(ensayos[i]))
+        
+        monitores_new = get_monitores(ensayo_id=ensayos[ei]["id"])
+        m_idx_new = 0
+        if monitores_new:
+            m_ids_new = [m["id"] for m in monitores_new]
+            m_idx_new = m_ids_new.index(v["monitor_id"]) if v["monitor_id"] in m_ids_new else 0
+        
+        if len(monitores_new) == 1:
+            st.info(f"📍 Monitor asignado: **{mlabel(monitores_new[0])}**")
+            mi = 0
+        else:
+            mi = st.selectbox("Monitor *",  range(len(monitores_new)), index=m_idx_new, format_func=lambda i: mlabel(monitores_new[i]))
+        
+        monitores = monitores_new
 
         c3, c4 = st.columns(2)
         fecha    = c3.date_input("Fecha *", value=date.fromisoformat(v["fecha"]))
