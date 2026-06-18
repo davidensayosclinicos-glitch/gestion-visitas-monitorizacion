@@ -54,10 +54,30 @@ def _pg_conn():
             _PG_CONN = psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True)
         except psycopg.OperationalError as ex:
             error_msg = str(ex).lower()
-            if "authentication failed" in error_msg or "password authentication" in error_msg:
+            
+            # Errores específicos de Supabase
+            if "enotfound" in error_msg and "tenant" in error_msg:
                 raise RuntimeError(
-                    "❌ Error de autenticación: Contraseña o usuario incorrecto en DATABASE_URL.\n"
-                    "Verifica que DATABASE_URL esté configurado correctamente en Streamlit Cloud secrets."
+                    "❌ Error de autenticación Supabase: Usuario/contraseña incorrectos.\n\n"
+                    "📋 Para obtener el DATABASE_URL correcto de Supabase:\n"
+                    "1. Ve a https://supabase.com → Tu proyecto\n"
+                    "2. Abre **Settings** (esquina inferior izquierda)\n"
+                    "3. Ve a **Database** → **Connection string**\n"
+                    "4. Selecciona **URI** en el dropdown\n"
+                    "5. Copia la cadena completa (comienza con postgresql://)\n"
+                    "6. Reemplaza [YOUR-PASSWORD] con tu contraseña de PostgreSQL\n\n"
+                    "⚠️ IMPORTANTE: Si olvidaste la contraseña:\n"
+                    "   En Settings → Database → Reset Database Password\n\n"
+                    "💡 Usa la conexión **directa (puerto 5432)**, no el pooler (puerto 6543)"
+                ) from ex
+            elif "authentication failed" in error_msg or "password authentication" in error_msg:
+                raise RuntimeError(
+                    "❌ Error de autenticación: Contraseña o usuario incorrecto.\n\n"
+                    "Pasos para verificar DATABASE_URL:\n"
+                    "1. En Supabase: Settings → Database → Connection string → URI\n"
+                    "2. Copia la cadena completa\n"
+                    "3. Reemplaza [YOUR-PASSWORD] con tu contraseña de PostgreSQL\n"
+                    "4. Pega en Streamlit Cloud: Manage app → Secrets → DATABASE_URL"
                 ) from ex
             elif "could not translate host name" in error_msg or "nodename nor servname provided" in error_msg:
                 raise RuntimeError(
@@ -71,9 +91,12 @@ def _pg_conn():
                 ) from ex
             else:
                 raise RuntimeError(
-                    f"❌ Error al conectar a PostgreSQL: {error_msg}\n"
-                    "Verifica que DATABASE_URL esté configurado correctamente en Streamlit Cloud.\n"
-                    "Debe tener formato: postgresql://usuario:contraseña@host:puerto/basedatos"
+                    f"❌ Error al conectar a PostgreSQL: {error_msg}\n\n"
+                    "Verifica tu DATABASE_URL en Streamlit Cloud:\n"
+                    "1. Manage app → Secrets\n"
+                    "2. Copia la cadena completa de Supabase (Settings → Database → Connection string → URI)\n"
+                    "3. Reemplaza [YOUR-PASSWORD] con tu contraseña\n"
+                    "4. Salva y refuerza (reload) la app"
                 ) from ex
     return _PG_CONN
 

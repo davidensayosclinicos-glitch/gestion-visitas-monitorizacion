@@ -67,14 +67,41 @@ Nota: para produccion conviene mantener RLS activado y autenticar usuarios.
 
 ## 3) Variables de entorno
 
-### Opcion A: PostgreSQL directo (igual que tu otra app)
+### Opcion A: PostgreSQL directo via DATABASE_URL (Recomendado)
 
-Define `DATABASE_URL`:
+#### Para Supabase: Obtener DATABASE_URL correcto
+
+**⚠️ IMPORTANTE: Usa la conexión directa (puerto 5432), NO el pooler (puerto 6543)**
+
+**Pasos:**
+
+1. Ve a tu proyecto en https://supabase.com
+2. En la esquina inferior izquierda, haz clic en el nombre de tu proyecto
+3. Selecciona **Settings**
+4. Ve a la pestaña **Database**
+5. En **Connection string**, selecciona **URI** del dropdown
+6. Verifica que sea el formato directo: `postgresql://postgres:[PASSWORD]@db.[PROJECT_ID].supabase.co:5432/postgres`
+   - ⚠️ **NO** uses `aws-...pooler.supabase.com:6543` (ese es el pooler)
+7. Copia la cadena completa
+8. Si no sabes la contraseña, ve a **Database** → **Reset database password**
+9. En tu terminal local, prueba:
 
 ```bash
-export DATABASE_URL="postgresql://usuario:password@host:6543/postgres"
+export DATABASE_URL="postgresql://postgres:TU_PASSWORD@db.XXXX.supabase.co:5432/postgres"
 streamlit run streamlit_app.py
 ```
+
+**En Streamlit Cloud:**
+
+1. Ve a tu app: https://streamlit.io → **My workspace** → Tu app
+2. Haz clic en **⋯ (Manage app)** (esquina inferior derecha)
+3. Ve a **Secrets**
+4. Agrega:
+```
+DATABASE_URL="postgresql://postgres:TU_PASSWORD@db.XXXX.supabase.co:5432/postgres"
+```
+5. Haz clic **Save**
+6. Espera 30 segundos y recarga tu app
 
 ### Opcion B: API de Supabase
 
@@ -104,28 +131,44 @@ En el sidebar debe aparecer:
 
 **Causas comunes:**
 
-1. **Contraseña incorrecta o usuario incorrecto**
-   - Ve a tu servidor PostgreSQL y verifica credenciales
-   - Para Supabase: Settings → Database → Connection string → URI
-   - Copia la string completa (incluye usuario y contraseña)
+1. **Error Supabase: "tenant/user postgres.XXXX not found"**
+   - ❌ Estás usando el **pooler** (puerto 6543) o la contraseña es incorrecta
+   - ✅ **Solución:**
+     - Usa la conexión **directa** (puerto 5432), no el pooler (6543)
+     - Copia el CONNECTION STRING de Supabase correctamente:
+       - Ve a Settings → Database → Connection string → URI
+       - Debe ser: `postgresql://postgres:PASSWORD@db.[PROJECT_ID].supabase.co:5432/postgres`
+     - Si olvidaste la contraseña: Settings → Database → Reset database password
+     - Reemplaza `[PASSWORD]` con tu contraseña real (sin corchetes)
 
-2. **DATABASE_URL mal configurado en Streamlit Cloud**
-   - En tu app en streamlit.app: **Manage app** → **Secrets**
-   - Verifica que esté exactamente: `DATABASE_URL="postgresql://..."`
-   - Sin comillas adicionales ni espacios
-   - Formato correcto: `postgresql://usuario:contrasena@host:puerto/nombrebd`
+2. **Contraseña incorrecta o usuario incorrecto (PostgreSQL)**
+   - ❌ Tu DATABASE_URL tiene credenciales inválidas
+   - ✅ **Solución:**
+     - Para Supabase: Settings → Database → Connection string → URI
+     - Copia la string completa (incluye usuario y contraseña)
+     - Reemplaza [PASSWORD] con tu contraseña real
 
-3. **Host no accesible desde Streamlit Cloud**
-   - Streamlit Cloud necesita que tu base de datos sea accesible desde internet
-   - Si tu PostgreSQL está en localhost o privado, no funcionará
-   - Opciones:
-     - Usa Supabase Cloud (público y accesible)
-     - Usa otro proveedor cloud (AWS RDS, Heroku Postgres, Railway, etc.)
-     - Configura un firewall que permita IPs de Streamlit Cloud (difícil)
+3. **DATABASE_URL mal configurado en Streamlit Cloud**
+   - ❌ El valor en Secrets tiene typos, espacios, o comillas extras
+   - ✅ **Solución:**
+     - En tu app en streamlit.io: **Manage app** → **Secrets**
+     - Verifica que sea exactamente: `DATABASE_URL="postgresql://..."`
+     - Sin comillas adicionales ni espacios extra
 
-4. **Contraseña expirada o reseteada**
-   - Si cambias la contraseña en PostgreSQL, actualiza DATABASE_URL en Secrets
-   - En Supabase: Settings → Database → Reset database password
+4. **Host no accesible desde Streamlit Cloud**
+   - ❌ Tu PostgreSQL está en localhost o en una red privada
+   - ✅ **Solución:**
+     - Streamlit Cloud necesita una BD pública accesible desde internet
+     - Usa Supabase Cloud (automáticamente accesible)
+     - O usa otro proveedor cloud (AWS RDS, Railway, etc.)
+
+5. **Contraseña expirada o reseteada**
+   - ❌ Cambiaste la contraseña en PostgreSQL pero no actualizaste DATABASE_URL
+   - ✅ **Solución:**
+     - En Supabase: Settings → Database → Reset database password
+     - Copia el nuevo DATABASE_URL
+     - Actualiza en Streamlit Cloud → Secrets
+     - Refuerza (reload) la app
 
 ### Error: "Falta DATABASE_URL"
 
