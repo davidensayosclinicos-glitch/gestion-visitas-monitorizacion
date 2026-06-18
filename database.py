@@ -24,16 +24,34 @@ except Exception:
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
+SUPABASE_KEY = (
+    os.getenv("SUPABASE_KEY", "").strip()
+    or os.getenv("SUPABASE_ANON_KEY", "").strip()
+    or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+)
 _SUPABASE_CLIENT = None
 _PG_CONN = None
+_ACTIVE_BACKEND = None
 MAX_VISITAS_POR_DIA = 2
 
 
-def get_backend_name():
+def _can_use_supabase_api():
+    return bool(SUPABASE_URL and SUPABASE_KEY)
+
+
+def _get_backend_name():
+    global _ACTIVE_BACKEND
+    if _ACTIVE_BACKEND:
+        return _ACTIVE_BACKEND
     if DATABASE_URL:
-        return "postgres"
-    return "supabase"
+        _ACTIVE_BACKEND = "postgres"
+    else:
+        _ACTIVE_BACKEND = "supabase"
+    return _ACTIVE_BACKEND
+
+
+def get_backend_name():
+    return _get_backend_name()
 
 
 def _norm_text(value):
@@ -41,7 +59,16 @@ def _norm_text(value):
 
 
 def _using_postgres():
-    return bool(DATABASE_URL)
+    return _get_backend_name() == "postgres"
+
+
+def _activate_supabase_fallback():
+    global _ACTIVE_BACKEND, _PG_CONN
+    if not _can_use_supabase_api():
+        return False
+    _ACTIVE_BACKEND = "supabase"
+    _PG_CONN = None
+    return True
 
 
 def _validate_database_url():
@@ -365,35 +392,39 @@ def init_db():
     required = ["ensayos", "monitores", "visitas", "dias_bloqueados"]
 
     if _using_postgres():
-        missing = []
-        with _pg_conn().cursor() as cur:
-            cur.execute(
-                """
-                select table_name
-                from information_schema.tables
-                where table_schema = 'public' and table_name = any(%s)
-                """,
-                [required],
-            )
-            existing = {r.get("table_name") for r in (cur.fetchall() or [])}
+        try:
+            missing = []
+            with _pg_conn().cursor() as cur:
+                cur.execute(
+                    """
+                    select table_name
+                    from information_schema.tables
+                    where table_schema = 'public' and table_name = any(%s)
+                    """,
+                    [required],
+                )
+                existing = {r.get("table_name") for r in (cur.fetchall() or [])}
 
-        for table_name in required:
-            if table_name not in existing:
-                missing.append(table_name)
-                continue
-            try:
-                with _pg_conn().cursor() as cur:
-                    cur.execute(sql.SQL("select 1 from {} limit 1").format(sql.Identifier(table_name)))
-            except Exception:
-                missing.append(table_name)
+            for table_name in required:
+                if table_name not in existing:
+                    missing.append(table_name)
+                    continue
+                try:
+                    with _pg_conn().cursor() as cur:
+                        cur.execute(sql.SQL("select 1 from {} limit 1").format(sql.Identifier(table_name)))
+                except Exception:
+                    missing.append(table_name)
 
-        if missing:
-            names = ", ".join(missing)
-            raise RuntimeError(
-                f"PostgreSQL configurado pero faltan tablas o permisos: {names}. "
-                "Revisa SUPABASE_SETUP.md."
-            )
-        return
+            if missing:
+                names = ", ".join(missing)
+                raise RuntimeError(
+                    f"PostgreSQL configurado pero faltan tablas o permisos: {names}. "
+                    "Revisa SUPABASE_SETUP.md."
+                )
+            return
+        except RuntimeError:
+            if not _activate_supabase_fallback():
+                raise
 
     missing = []
     probe_columns = {

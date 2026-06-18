@@ -49,6 +49,12 @@ except RuntimeError as ex:
         SUPABASE_URL="https://xxxx.supabase.co"
         SUPABASE_KEY="your-api-key"
         ```
+
+        También se aceptan estos nombres habituales para la clave:
+        - `SUPABASE_ANON_KEY`
+        - `SUPABASE_SERVICE_ROLE_KEY`
+
+        Si PostgreSQL directo o el pooler fallan en Streamlit Cloud, esta opción evita el problema de red/autenticación del conector PostgreSQL.
         """)
     st.stop()
 
