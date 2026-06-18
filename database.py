@@ -1,5 +1,5 @@
 """
-database.py — Capa de acceso a datos (Supabase)
+database.py — Capa de acceso a datos (PostgreSQL/Supabase)
 Gestion de Visitas de Monitorizacion — Ensayos Clinicos
 """
 import os
@@ -8,22 +8,50 @@ from datetime import date, datetime
 import pandas as pd
 
 try:
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+except Exception:
+    psycopg = None
+    sql = None
+    dict_row = None
+
+try:
     from supabase import create_client
 except Exception:
     create_client = None
 
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
 _SUPABASE_CLIENT = None
+_PG_CONN = None
 MAX_VISITAS_POR_DIA = 2
 
 
 def get_backend_name():
+    if DATABASE_URL:
+        return "postgres"
     return "supabase"
 
 
 def _norm_text(value):
     return (value or "").strip().lower()
+
+
+def _using_postgres():
+    return bool(DATABASE_URL)
+
+
+def _pg_conn():
+    global _PG_CONN
+    if not DATABASE_URL:
+        raise RuntimeError("Falta DATABASE_URL para conexion PostgreSQL.")
+    if psycopg is None:
+        raise RuntimeError("Falta la dependencia 'psycopg'. Ejecuta: pip install psycopg[binary]")
+    if _PG_CONN is None or _PG_CONN.closed:
+        _PG_CONN = psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True)
+    return _PG_CONN
 
 
 def _sb():
@@ -32,37 +60,122 @@ def _sb():
         raise RuntimeError("Falta la dependencia 'supabase'. Ejecuta: pip install supabase")
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError(
-            "Faltan variables de entorno de Supabase. Define SUPABASE_URL y SUPABASE_KEY. "
-            "Consulta SUPABASE_SETUP.md."
+            "No hay backend configurado. Define DATABASE_URL para PostgreSQL directo, "
+            "o SUPABASE_URL y SUPABASE_KEY para API de Supabase."
         )
     if _SUPABASE_CLIENT is None:
         _SUPABASE_CLIENT = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _SUPABASE_CLIENT
 
 
-def _supabase_fetch_all(table_name):
+def _fetch_all(table_name):
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(sql.SQL("select * from {}" ).format(sql.Identifier(table_name)))
+            return cur.fetchall() or []
     res = _sb().table(table_name).select("*").execute()
     return res.data or []
 
 
-def _supabase_get_by_id(table_name, entity_id):
+def _get_by_id(table_name, entity_id):
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                sql.SQL("select * from {} where id = %s limit 1").format(sql.Identifier(table_name)),
+                [entity_id],
+            )
+            row = cur.fetchone()
+            return row if row else None
     res = _sb().table(table_name).select("*").eq("id", entity_id).limit(1).execute()
     data = res.data or []
     return data[0] if data else None
 
 
+def _insert_row(table_name, data):
+    if _using_postgres():
+        keys = list(data.keys())
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                sql.SQL("insert into {} ({}) values ({})").format(
+                    sql.Identifier(table_name),
+                    sql.SQL(", ").join(sql.Identifier(k) for k in keys),
+                    sql.SQL(", ").join(sql.Placeholder() for _ in keys),
+                ),
+                [data[k] for k in keys],
+            )
+        return
+    _sb().table(table_name).insert(data).execute()
+
+
+def _update_row_by_id(table_name, entity_id, data):
+    if _using_postgres():
+        keys = list(data.keys())
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                sql.SQL("update {} set {} where id = %s").format(
+                    sql.Identifier(table_name),
+                    sql.SQL(", ").join(
+                        sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder()) for k in keys
+                    ),
+                ),
+                [data[k] for k in keys] + [entity_id],
+            )
+        return
+    _sb().table(table_name).update(data).eq("id", entity_id).execute()
+
+
+def _delete_row_by_id(table_name, entity_id):
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                sql.SQL("delete from {} where id = %s").format(sql.Identifier(table_name)),
+                [entity_id],
+            )
+        return
+    _sb().table(table_name).delete().eq("id", entity_id).execute()
+
+
 def get_dias_bloqueados(desde='', hasta=''):
-    query = _sb().table("dias_bloqueados").select("fecha,motivo")
-    if desde:
-        query = query.gte("fecha", desde)
-    if hasta:
-        query = query.lte("fecha", hasta)
-    rows = query.execute().data or []
+    if _using_postgres():
+        where = []
+        params = []
+        if desde:
+            where.append("fecha >= %s")
+            params.append(desde)
+        if hasta:
+            where.append("fecha <= %s")
+            params.append(hasta)
+
+        query = "select fecha, motivo from dias_bloqueados"
+        if where:
+            query += " where " + " and ".join(where)
+        with _pg_conn().cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall() or []
+    else:
+        query = _sb().table("dias_bloqueados").select("fecha,motivo")
+        if desde:
+            query = query.gte("fecha", desde)
+        if hasta:
+            query = query.lte("fecha", hasta)
+        rows = query.execute().data or []
     rows.sort(key=lambda r: _norm_text(r.get("fecha")))
     return rows
 
 
 def bloquear_dia(fecha, motivo=''):
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                insert into dias_bloqueados (fecha, motivo)
+                values (%s, %s)
+                on conflict (fecha) do update set motivo = excluded.motivo
+                """,
+                [fecha, (motivo or "").strip()],
+            )
+        return
+
     _sb().table("dias_bloqueados").upsert(
         {
             "fecha": fecha,
@@ -73,10 +186,34 @@ def bloquear_dia(fecha, motivo=''):
 
 
 def desbloquear_dia(fecha):
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute("delete from dias_bloqueados where fecha = %s", [fecha])
+        return
     _sb().table("dias_bloqueados").delete().eq("fecha", fecha).execute()
 
 
 def get_visitas_count_by_date(desde='', hasta=''):
+    if _using_postgres():
+        where = []
+        params = []
+        if desde:
+            where.append("fecha >= %s")
+            params.append(desde)
+        if hasta:
+            where.append("fecha <= %s")
+            params.append(hasta)
+
+        query = "select fecha, count(*) as total from visitas"
+        if where:
+            query += " where " + " and ".join(where)
+        query += " group by fecha"
+
+        with _pg_conn().cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall() or []
+        return {row.get("fecha"): int(row.get("total", 0)) for row in rows if row.get("fecha")}
+
     query = _sb().table("visitas").select("fecha")
     if desde:
         query = query.gte("fecha", desde)
@@ -101,7 +238,12 @@ def _validar_limites_visita(fecha, exclude_visita_id=None):
     if fecha in bloqueados:
         raise ValueError("No se puede registrar la visita: el dia esta bloqueado.")
 
-    rows = _sb().table("visitas").select("id").eq("fecha", fecha).execute().data or []
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute("select id from visitas where fecha = %s", [fecha])
+            rows = cur.fetchall() or []
+    else:
+        rows = _sb().table("visitas").select("id").eq("fecha", fecha).execute().data or []
     if exclude_visita_id is not None:
         rows = [r for r in rows if r.get("id") != exclude_visita_id]
 
@@ -111,6 +253,39 @@ def _validar_limites_visita(fecha, exclude_visita_id=None):
 
 def init_db():
     # Verifica conectividad y tablas requeridas.
+    required = ["ensayos", "monitores", "visitas", "dias_bloqueados"]
+
+    if _using_postgres():
+        missing = []
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                select table_name
+                from information_schema.tables
+                where table_schema = 'public' and table_name = any(%s)
+                """,
+                [required],
+            )
+            existing = {r.get("table_name") for r in (cur.fetchall() or [])}
+
+        for table_name in required:
+            if table_name not in existing:
+                missing.append(table_name)
+                continue
+            try:
+                with _pg_conn().cursor() as cur:
+                    cur.execute(sql.SQL("select 1 from {} limit 1").format(sql.Identifier(table_name)))
+            except Exception:
+                missing.append(table_name)
+
+        if missing:
+            names = ", ".join(missing)
+            raise RuntimeError(
+                f"PostgreSQL configurado pero faltan tablas o permisos: {names}. "
+                "Revisa SUPABASE_SETUP.md."
+            )
+        return
+
     missing = []
     probe_columns = {
         "ensayos": "id",
@@ -134,7 +309,7 @@ def init_db():
 # ── ENSAYOS ───────────────────────────────────────────────────────────────────
 
 def get_ensayos(texto='', estado=''):
-    rows = _supabase_fetch_all("ensayos")
+    rows = _fetch_all("ensayos")
     estado_n = _norm_text(estado)
     texto_n = _norm_text(texto)
 
@@ -156,25 +331,25 @@ def get_ensayos(texto='', estado=''):
 
 
 def get_ensayo_by_id(eid):
-    return _supabase_get_by_id("ensayos", eid)
+    return _get_by_id("ensayos", eid)
 
 
 def create_ensayo(data):
-    _sb().table("ensayos").insert(data).execute()
+    _insert_row("ensayos", data)
 
 
 def update_ensayo(eid, data):
-    _sb().table("ensayos").update(data).eq("id", eid).execute()
+    _update_row_by_id("ensayos", eid, data)
 
 
 def delete_ensayo(eid):
-    _sb().table("ensayos").delete().eq("id", eid).execute()
+    _delete_row_by_id("ensayos", eid)
 
 
 # ── MONITORES ─────────────────────────────────────────────────────────────────
 
 def get_monitores(texto=''):
-    rows = _supabase_fetch_all("monitores")
+    rows = _fetch_all("monitores")
     texto_n = _norm_text(texto)
 
     if texto_n:
@@ -193,27 +368,27 @@ def get_monitores(texto=''):
 
 
 def get_monitor_by_id(mid):
-    return _supabase_get_by_id("monitores", mid)
+    return _get_by_id("monitores", mid)
 
 
 def create_monitor(data):
-    _sb().table("monitores").insert(data).execute()
+    _insert_row("monitores", data)
 
 
 def update_monitor(mid, data):
-    _sb().table("monitores").update(data).eq("id", mid).execute()
+    _update_row_by_id("monitores", mid, data)
 
 
 def delete_monitor(mid):
-    _sb().table("monitores").delete().eq("id", mid).execute()
+    _delete_row_by_id("monitores", mid)
 
 
 # ── VISITAS ───────────────────────────────────────────────────────────────────
 
 def get_visitas_df(texto='', estado='', ensayo_id=None, desde='', hasta=''):
-    visitas = pd.DataFrame(_supabase_fetch_all("visitas"))
-    ensayos = pd.DataFrame(_supabase_fetch_all("ensayos"))
-    monitores = pd.DataFrame(_supabase_fetch_all("monitores"))
+    visitas = pd.DataFrame(_fetch_all("visitas"))
+    ensayos = pd.DataFrame(_fetch_all("ensayos"))
+    monitores = pd.DataFrame(_fetch_all("monitores"))
 
     cols = [
         "id", "ensayo_id", "monitor_id", "fecha", "hora", "tipo", "estado", "notas",
@@ -288,23 +463,23 @@ def get_visitas_df(texto='', estado='', ensayo_id=None, desde='', hasta=''):
 
 
 def get_visita_by_id(vid):
-    return _supabase_get_by_id("visitas", vid)
+    return _get_by_id("visitas", vid)
 
 
 def create_visita(data):
     _validar_limites_visita(data.get("fecha", ""))
-    _sb().table("visitas").insert(data).execute()
+    _insert_row("visitas", data)
 
 
 def update_visita(vid, data):
     _validar_limites_visita(data.get("fecha", ""), exclude_visita_id=vid)
     data = dict(data)
     data["actualizado_en"] = datetime.utcnow().isoformat()
-    _sb().table("visitas").update(data).eq("id", vid).execute()
+    _update_row_by_id("visitas", vid, data)
 
 
 def delete_visita(vid):
-    _sb().table("visitas").delete().eq("id", vid).execute()
+    _delete_row_by_id("visitas", vid)
 
 
 # ── ESTADISTICAS ──────────────────────────────────────────────────────────────

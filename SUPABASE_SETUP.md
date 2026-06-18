@@ -1,9 +1,9 @@
-# Configuracion de Supabase
+# Configuracion de Base de Datos
 
-La app ya soporta dos backends automaticamente:
+La app soporta dos backends automaticamente:
 
-- SQLite local (por defecto)
-- Supabase (si defines variables de entorno)
+- PostgreSQL directo con `DATABASE_URL` (recomendado si quieres igual que tu otra app)
+- API de Supabase con `SUPABASE_URL` + `SUPABASE_KEY`
 
 ## 1) Crear tablas en Supabase
 
@@ -67,7 +67,18 @@ Nota: para produccion conviene mantener RLS activado y autenticar usuarios.
 
 ## 3) Variables de entorno
 
-Define estas variables antes de lanzar Streamlit:
+### Opcion A: PostgreSQL directo (igual que tu otra app)
+
+Define `DATABASE_URL`:
+
+```bash
+export DATABASE_URL="postgresql://usuario:password@host:6543/postgres"
+streamlit run streamlit_app.py
+```
+
+### Opcion B: API de Supabase
+
+Define estas variables:
 
 - `SUPABASE_URL`
 - `SUPABASE_KEY` (recomendado usar `service_role` solo en backend seguro)
@@ -84,8 +95,7 @@ streamlit run streamlit_app.py
 
 En el sidebar debe aparecer:
 
-- `Backend: ☁️ Supabase`
+- `Backend: 🐘 PostgreSQL (DATABASE_URL)` si usas `DATABASE_URL`
+- `Backend: ☁️ Supabase API` si usas `SUPABASE_URL` y `SUPABASE_KEY`
 
-Si no estan las variables, veras:
-
-- `Backend: 💾 SQLite local`
+Si no estan las variables necesarias, la app mostrara un error de configuracion al iniciar.
