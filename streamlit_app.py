@@ -2,9 +2,10 @@
 streamlit_app.py — Gestión de Visitas de Monitorización
 Coordinación de Ensayos Clínicos
 """
+import calendar
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from database import (
     init_db,
@@ -12,7 +13,7 @@ from database import (
     get_monitores, get_monitor_by_id, create_monitor, update_monitor, delete_monitor,
     get_visitas_df, get_visita_by_id, create_visita, update_visita, delete_visita,
     get_stats, get_proximas_visitas, get_resumen_por_ensayo,
-    get_db_bytes, restore_db_bytes,
+    get_dias_bloqueados, bloquear_dia, desbloquear_dia, get_visitas_count_by_date,
 )
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
@@ -51,10 +52,135 @@ def mlabel(m):
     return f"{m['nombre']} {m['apellidos']}{extra}"
 
 
+def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloqueados: dict):
+    week_names = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
+    cal = calendar.Calendar(firstweekday=0)
+    weeks = cal.monthdatescalendar(year, month)
+    # Cuadricula fija de 6 semanas para mantener consistencia visual todos los meses.
+    while len(weeks) < 6:
+        last_day = weeks[-1][-1]
+        weeks.append([last_day + timedelta(days=i) for i in range(1, 8)])
+
+    html = """
+    <style>
+    .gvm-cal { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .gvm-cal th { text-align: center; padding: 6px; font-size: 0.85rem; color: #444; }
+    .gvm-cal td { border: 1px solid #e6e6e6; vertical-align: top; height: 86px; padding: 6px; border-radius: 8px; }
+    .gvm-day { font-weight: 700; margin-bottom: 6px; }
+    .gvm-outside { background: #fafafa; color: #888; }
+    .gvm-state-ok { background: #f7fbf7; }
+    .gvm-state-mid { background: #fff8e8; }
+    .gvm-state-full { background: #ffe9e9; }
+    .gvm-state-locked { background: #eceff3; }
+    .gvm-chip { display: inline-block; font-size: 0.78rem; padding: 2px 6px; border-radius: 999px; background: #fff; border: 1px solid #d9d9d9; }
+    </style>
+    """
+
+    html += "<table class='gvm-cal'><thead><tr>"
+    for w in week_names:
+        html += f"<th>{w}</th>"
+    html += "</tr></thead><tbody>"
+
+    for week in weeks:
+        html += "<tr>"
+        for day in week:
+            f = day.isoformat()
+            n = int(visitas_por_dia.get(f, 0))
+            is_blocked = f in bloqueados
+            in_current_month = day.month == month
+
+            if is_blocked:
+                cls = "gvm-state-locked"
+                chip = "Bloqueado"
+            elif n >= 2:
+                cls = "gvm-state-full"
+                chip = f"{n} visitas"
+            elif n == 1:
+                cls = "gvm-state-mid"
+                chip = "1 visita"
+            else:
+                cls = "gvm-state-ok"
+                chip = "Libre"
+
+            if not in_current_month:
+                cls = "gvm-outside"
+
+            html += (
+                f"<td class='{cls}'>"
+                f"<div class='gvm-day'>{day.day}</div>"
+                f"<span class='gvm-chip'>{chip}</span>"
+                "</td>"
+            )
+        html += "</tr>"
+    html += "</tbody></table>"
+
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def render_calendario_general(section_key: str):
+    st.subheader("🗓️ Calendario general de visitas")
+    s1, s2, s3 = st.columns([1, 1, 3])
+    anio = s1.selectbox("Año", list(range(2024, 2036)), index=date.today().year - 2024, key=f"{section_key}_anio")
+    mes = s2.selectbox("Mes", list(range(1, 13)), index=date.today().month - 1, key=f"{section_key}_mes",
+                       format_func=lambda x: calendar.month_name[x])
+    s3.caption("Regla: maximo 2 visitas por dia. Los dias bloqueados no aceptan visitas.")
+
+    cal = calendar.Calendar(firstweekday=0)
+    weeks = cal.monthdatescalendar(anio, mes)
+    while len(weeks) < 6:
+        last_day = weeks[-1][-1]
+        weeks.append([last_day + timedelta(days=i) for i in range(1, 8)])
+
+    desde_grid = weeks[0][0].isoformat()
+    hasta_grid = weeks[-1][-1].isoformat()
+
+    try:
+        visitas_por_dia = get_visitas_count_by_date(desde=desde_grid, hasta=hasta_grid)
+        bloqueados_rows = get_dias_bloqueados(desde=desde_grid, hasta=hasta_grid)
+        bloqueados_map = {r.get("fecha"): r.get("motivo", "") for r in bloqueados_rows}
+        render_month_calendar(anio, mes, visitas_por_dia, bloqueados_map)
+    except Exception as ex:
+        st.error(
+            "No se pudo cargar el calendario de bloqueos. "
+            "Verifica que exista la tabla public.dias_bloqueados en Supabase."
+        )
+        st.caption(f"Detalle técnico: {ex}")
+        bloqueados_rows = []
+
+    st.caption("Leyenda: Libre (0), 1 visita, 2 visitas o mas (no permite nuevas), Bloqueado.")
+
+    b1, b2, b3, b4 = st.columns([2, 3, 1, 1])
+    fecha_bloqueo = b1.date_input("Dia a bloquear", value=date.today(), key=f"{section_key}_fecha_bloqueo")
+    motivo_bloqueo = b2.text_input("Motivo (opcional)", key=f"{section_key}_motivo_bloqueo")
+    if b3.button("Bloquear", use_container_width=True, key=f"{section_key}_bloquear"):
+        try:
+            bloquear_dia(fecha_bloqueo.isoformat(), motivo_bloqueo)
+            st.success("Dia bloqueado.")
+            st.rerun()
+        except Exception as ex:
+            st.error(f"No se pudo bloquear el dia: {ex}")
+    if b4.button("Desbloquear", use_container_width=True, key=f"{section_key}_desbloquear"):
+        try:
+            desbloquear_dia(fecha_bloqueo.isoformat())
+            st.success("Dia desbloqueado.")
+            st.rerun()
+        except Exception as ex:
+            st.error(f"No se pudo desbloquear el dia: {ex}")
+
+    bloqueados_mes = [r for r in bloqueados_rows if r.get("fecha", "").startswith(f"{anio:04d}-{mes:02d}-")]
+    if bloqueados_mes:
+        df_b = pd.DataFrame(bloqueados_mes)
+        df_b = df_b.rename(columns={"fecha": "Fecha", "motivo": "Motivo"})
+        st.dataframe(df_b, use_container_width=True, hide_index=True)
+    else:
+        st.info("No hay dias bloqueados en este mes.")
+
+
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🏥 Monitorización")
     st.caption("Coordinación de Ensayos Clínicos")
+    st.caption("Backend: ☁️ Supabase")
     st.divider()
 
     nav = st.radio(
@@ -66,26 +192,7 @@ with st.sidebar:
     st.divider()
 
     with st.expander("💾 Copia de seguridad"):
-        db_bytes = get_db_bytes()
-        if db_bytes:
-            today_str = date.today().isoformat()
-            st.download_button(
-                "⬇️ Descargar base de datos",
-                data=db_bytes,
-                file_name=f"gvm_backup_{today_str}.db",
-                mime="application/octet-stream",
-                use_container_width=True,
-            )
-        else:
-            st.caption("Aún no hay datos guardados.")
-
-        st.caption("Restaurar copia:")
-        uploaded = st.file_uploader("Subir archivo .db", type=["db"], label_visibility="collapsed")
-        if uploaded:
-            if st.button("🔄 Restaurar", use_container_width=True):
-                restore_db_bytes(uploaded.read())
-                st.success("Base de datos restaurada.")
-                st.rerun()
+        st.info("Los datos se guardan directamente en Supabase.")
 
 
 # ── DIALOGS: VISITAS ──────────────────────────────────────────────────────────
@@ -118,15 +225,19 @@ def dialog_nueva_visita():
                              placeholder="Observaciones, documentos solicitados, incidencias...")
 
         if st.form_submit_button("💾 Guardar visita", use_container_width=True, type="primary"):
-            create_visita({
-                "ensayo_id":  ensayos[ei]["id"],
-                "monitor_id": monitores[mi]["id"],
-                "fecha":      fecha.isoformat(),
-                "hora":       hora_val.strftime("%H:%M"),
-                "tipo":       tipo,
-                "estado":     estado,
-                "notas":      notas.strip(),
-            })
+            try:
+                create_visita({
+                    "ensayo_id":  ensayos[ei]["id"],
+                    "monitor_id": monitores[mi]["id"],
+                    "fecha":      fecha.isoformat(),
+                    "hora":       hora_val.strftime("%H:%M"),
+                    "tipo":       tipo,
+                    "estado":     estado,
+                    "notas":      notas.strip(),
+                })
+            except ValueError as ex:
+                st.error(str(ex))
+                return
             st.success("✅ Visita registrada correctamente.")
             st.rerun()
 
@@ -165,15 +276,19 @@ def dialog_editar_visita(visita_id: int):
         notas = st.text_area("Notas", value=v["notas"], height=80)
 
         if st.form_submit_button("💾 Guardar cambios", use_container_width=True, type="primary"):
-            update_visita(visita_id, {
-                "ensayo_id":  ensayos[ei]["id"],
-                "monitor_id": monitores[mi]["id"],
-                "fecha":      fecha.isoformat(),
-                "hora":       hora_val.strftime("%H:%M"),
-                "tipo":       tipo,
-                "estado":     estado,
-                "notas":      notas.strip(),
-            })
+            try:
+                update_visita(visita_id, {
+                    "ensayo_id":  ensayos[ei]["id"],
+                    "monitor_id": monitores[mi]["id"],
+                    "fecha":      fecha.isoformat(),
+                    "hora":       hora_val.strftime("%H:%M"),
+                    "tipo":       tipo,
+                    "estado":     estado,
+                    "notas":      notas.strip(),
+                })
+            except ValueError as ex:
+                st.error(str(ex))
+                return
             st.success("✅ Visita actualizada.")
             st.rerun()
 
@@ -372,6 +487,9 @@ def page_dashboard():
     c4.metric("🔬 Ensayos activos",            stats["ensayos_activos"])
 
     st.divider()
+    render_calendario_general("home")
+
+    st.divider()
 
     col_a, col_b = st.columns([3, 2])
 
@@ -404,6 +522,8 @@ def page_visitas():
     col_h.header("📅 Visitas de Monitorización")
     if col_btn.button("➕ Nueva Visita", use_container_width=True, type="primary"):
         dialog_nueva_visita()
+
+    st.caption("El calendario y bloqueos se gestionan desde la pantalla Inicio.")
 
     # Filtros
     with st.expander("🔍 Filtros", expanded=True):

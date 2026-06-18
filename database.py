@@ -1,323 +1,383 @@
 """
-database.py — Capa de acceso a datos SQLite
-Gestión de Visitas de Monitorización — Ensayos Clínicos
+database.py — Capa de acceso a datos (Supabase)
+Gestion de Visitas de Monitorizacion — Ensayos Clinicos
 """
-import sqlite3
+import os
+from datetime import date, datetime
+
 import pandas as pd
-from pathlib import Path
-from datetime import date
 
-DB_PATH = Path(__file__).parent / "data" / "gvm.db"
+try:
+    from supabase import create_client
+except Exception:
+    create_client = None
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
+_SUPABASE_CLIENT = None
+MAX_VISITAS_POR_DIA = 2
 
 
-def _get_conn():
-    DB_PATH.parent.mkdir(exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def get_backend_name():
+    return "supabase"
+
+
+def _norm_text(value):
+    return (value or "").strip().lower()
+
+
+def _sb():
+    global _SUPABASE_CLIENT
+    if create_client is None:
+        raise RuntimeError("Falta la dependencia 'supabase'. Ejecuta: pip install supabase")
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError(
+            "Faltan variables de entorno de Supabase. Define SUPABASE_URL y SUPABASE_KEY. "
+            "Consulta SUPABASE_SETUP.md."
+        )
+    if _SUPABASE_CLIENT is None:
+        _SUPABASE_CLIENT = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return _SUPABASE_CLIENT
+
+
+def _supabase_fetch_all(table_name):
+    res = _sb().table(table_name).select("*").execute()
+    return res.data or []
+
+
+def _supabase_get_by_id(table_name, entity_id):
+    res = _sb().table(table_name).select("*").eq("id", entity_id).limit(1).execute()
+    data = res.data or []
+    return data[0] if data else None
+
+
+def get_dias_bloqueados(desde='', hasta=''):
+    query = _sb().table("dias_bloqueados").select("fecha,motivo")
+    if desde:
+        query = query.gte("fecha", desde)
+    if hasta:
+        query = query.lte("fecha", hasta)
+    rows = query.execute().data or []
+    rows.sort(key=lambda r: _norm_text(r.get("fecha")))
+    return rows
+
+
+def bloquear_dia(fecha, motivo=''):
+    _sb().table("dias_bloqueados").upsert(
+        {
+            "fecha": fecha,
+            "motivo": (motivo or "").strip(),
+        },
+        on_conflict="fecha",
+    ).execute()
+
+
+def desbloquear_dia(fecha):
+    _sb().table("dias_bloqueados").delete().eq("fecha", fecha).execute()
+
+
+def get_visitas_count_by_date(desde='', hasta=''):
+    query = _sb().table("visitas").select("fecha")
+    if desde:
+        query = query.gte("fecha", desde)
+    if hasta:
+        query = query.lte("fecha", hasta)
+    rows = query.execute().data or []
+
+    out = {}
+    for row in rows:
+        f = row.get("fecha")
+        if not f:
+            continue
+        out[f] = out.get(f, 0) + 1
+    return out
+
+
+def _validar_limites_visita(fecha, exclude_visita_id=None):
+    if not fecha:
+        raise ValueError("La fecha de la visita es obligatoria.")
+
+    bloqueados = {d.get("fecha") for d in get_dias_bloqueados(desde=fecha, hasta=fecha)}
+    if fecha in bloqueados:
+        raise ValueError("No se puede registrar la visita: el dia esta bloqueado.")
+
+    rows = _sb().table("visitas").select("id").eq("fecha", fecha).execute().data or []
+    if exclude_visita_id is not None:
+        rows = [r for r in rows if r.get("id") != exclude_visita_id]
+
+    if len(rows) >= MAX_VISITAS_POR_DIA:
+        raise ValueError(f"No se puede registrar la visita: maximo {MAX_VISITAS_POR_DIA} visitas por dia.")
 
 
 def init_db():
-    conn = _get_conn()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS ensayos (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            codigo       TEXT NOT NULL,
-            nombre       TEXT NOT NULL,
-            promotor     TEXT DEFAULT '',
-            fase         TEXT DEFAULT '',
-            ip           TEXT DEFAULT '',
-            estado       TEXT DEFAULT 'activo',
-            fecha_inicio TEXT DEFAULT '',
-            fecha_fin    TEXT DEFAULT '',
-            notas        TEXT DEFAULT '',
-            creado_en    TEXT DEFAULT (datetime('now','localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS monitores (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre    TEXT NOT NULL,
-            apellidos TEXT NOT NULL,
-            empresa   TEXT DEFAULT '',
-            email     TEXT DEFAULT '',
-            telefono  TEXT DEFAULT '',
-            activo    INTEGER DEFAULT 1,
-            notas     TEXT DEFAULT '',
-            creado_en TEXT DEFAULT (datetime('now','localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS visitas (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            ensayo_id      INTEGER REFERENCES ensayos(id),
-            monitor_id     INTEGER REFERENCES monitores(id),
-            fecha          TEXT NOT NULL,
-            hora           TEXT DEFAULT '',
-            tipo           TEXT NOT NULL,
-            estado         TEXT DEFAULT 'pendiente',
-            notas          TEXT DEFAULT '',
-            creado_en      TEXT DEFAULT (datetime('now','localtime')),
-            actualizado_en TEXT DEFAULT (datetime('now','localtime'))
-        );
-    """)
-    conn.commit()
-    conn.close()
+    # Verifica conectividad y tablas requeridas.
+    missing = []
+    probe_columns = {
+        "ensayos": "id",
+        "monitores": "id",
+        "visitas": "id",
+        "dias_bloqueados": "fecha",
+    }
+    for table_name, col in probe_columns.items():
+        try:
+            _sb().table(table_name).select(col).limit(1).execute()
+        except Exception:
+            missing.append(table_name)
+    if missing:
+        names = ", ".join(missing)
+        raise RuntimeError(
+            f"Supabase configurado pero faltan tablas o permisos: {names}. "
+            "Revisa SUPABASE_SETUP.md y las politicas RLS."
+        )
 
 
 # ── ENSAYOS ───────────────────────────────────────────────────────────────────
 
 def get_ensayos(texto='', estado=''):
-    conn = _get_conn()
-    q = "SELECT * FROM ensayos WHERE 1=1"
-    params = []
-    if estado:
-        q += " AND estado = ?"
-        params.append(estado)
-    if texto:
-        q += " AND (LOWER(codigo) LIKE LOWER(?) OR LOWER(nombre) LIKE LOWER(?) OR LOWER(promotor) LIKE LOWER(?))"
-        t = f"%{texto}%"
-        params.extend([t, t, t])
-    q += " ORDER BY codigo"
-    rows = conn.execute(q, params).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    rows = _supabase_fetch_all("ensayos")
+    estado_n = _norm_text(estado)
+    texto_n = _norm_text(texto)
+
+    if estado_n:
+        rows = [r for r in rows if _norm_text(r.get("estado")) == estado_n]
+
+    if texto_n:
+        def match_row(r):
+            return (
+                texto_n in _norm_text(r.get("codigo"))
+                or texto_n in _norm_text(r.get("nombre"))
+                or texto_n in _norm_text(r.get("promotor"))
+            )
+
+        rows = [r for r in rows if match_row(r)]
+
+    rows.sort(key=lambda r: _norm_text(r.get("codigo")))
+    return rows
 
 
 def get_ensayo_by_id(eid):
-    conn = _get_conn()
-    row = conn.execute("SELECT * FROM ensayos WHERE id = ?", (eid,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return _supabase_get_by_id("ensayos", eid)
 
 
 def create_ensayo(data):
-    conn = _get_conn()
-    conn.execute("""
-        INSERT INTO ensayos (codigo, nombre, promotor, fase, ip, estado, fecha_inicio, fecha_fin, notas)
-        VALUES (:codigo, :nombre, :promotor, :fase, :ip, :estado, :fecha_inicio, :fecha_fin, :notas)
-    """, data)
-    conn.commit()
-    conn.close()
+    _sb().table("ensayos").insert(data).execute()
 
 
 def update_ensayo(eid, data):
-    conn = _get_conn()
-    conn.execute("""
-        UPDATE ensayos SET codigo=:codigo, nombre=:nombre, promotor=:promotor, fase=:fase,
-        ip=:ip, estado=:estado, fecha_inicio=:fecha_inicio, fecha_fin=:fecha_fin, notas=:notas
-        WHERE id=:id
-    """, {**data, 'id': eid})
-    conn.commit()
-    conn.close()
+    _sb().table("ensayos").update(data).eq("id", eid).execute()
 
 
 def delete_ensayo(eid):
-    conn = _get_conn()
-    conn.execute("DELETE FROM ensayos WHERE id = ?", (eid,))
-    conn.commit()
-    conn.close()
+    _sb().table("ensayos").delete().eq("id", eid).execute()
 
 
 # ── MONITORES ─────────────────────────────────────────────────────────────────
 
 def get_monitores(texto=''):
-    conn = _get_conn()
-    q = "SELECT * FROM monitores WHERE 1=1"
-    params = []
-    if texto:
-        q += """ AND (LOWER(nombre) LIKE LOWER(?) OR LOWER(apellidos) LIKE LOWER(?)
-                  OR LOWER(empresa) LIKE LOWER(?) OR LOWER(email) LIKE LOWER(?))"""
-        t = f"%{texto}%"
-        params.extend([t, t, t, t])
-    q += " ORDER BY apellidos, nombre"
-    rows = conn.execute(q, params).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    rows = _supabase_fetch_all("monitores")
+    texto_n = _norm_text(texto)
+
+    if texto_n:
+        def match_row(r):
+            return (
+                texto_n in _norm_text(r.get("nombre"))
+                or texto_n in _norm_text(r.get("apellidos"))
+                or texto_n in _norm_text(r.get("empresa"))
+                or texto_n in _norm_text(r.get("email"))
+            )
+
+        rows = [r for r in rows if match_row(r)]
+
+    rows.sort(key=lambda r: (_norm_text(r.get("apellidos")), _norm_text(r.get("nombre"))))
+    return rows
 
 
 def get_monitor_by_id(mid):
-    conn = _get_conn()
-    row = conn.execute("SELECT * FROM monitores WHERE id = ?", (mid,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return _supabase_get_by_id("monitores", mid)
 
 
 def create_monitor(data):
-    conn = _get_conn()
-    conn.execute("""
-        INSERT INTO monitores (nombre, apellidos, empresa, email, telefono, activo, notas)
-        VALUES (:nombre, :apellidos, :empresa, :email, :telefono, :activo, :notas)
-    """, data)
-    conn.commit()
-    conn.close()
+    _sb().table("monitores").insert(data).execute()
 
 
 def update_monitor(mid, data):
-    conn = _get_conn()
-    conn.execute("""
-        UPDATE monitores SET nombre=:nombre, apellidos=:apellidos, empresa=:empresa,
-        email=:email, telefono=:telefono, activo=:activo, notas=:notas
-        WHERE id=:id
-    """, {**data, 'id': mid})
-    conn.commit()
-    conn.close()
+    _sb().table("monitores").update(data).eq("id", mid).execute()
 
 
 def delete_monitor(mid):
-    conn = _get_conn()
-    conn.execute("DELETE FROM monitores WHERE id = ?", (mid,))
-    conn.commit()
-    conn.close()
+    _sb().table("monitores").delete().eq("id", mid).execute()
 
 
 # ── VISITAS ───────────────────────────────────────────────────────────────────
 
 def get_visitas_df(texto='', estado='', ensayo_id=None, desde='', hasta=''):
-    conn = _get_conn()
-    q = """
-        SELECT v.id, v.ensayo_id, v.monitor_id, v.fecha, v.hora, v.tipo, v.estado, v.notas,
-               e.codigo AS ensayo_codigo, e.nombre AS ensayo_nombre,
-               m.nombre || ' ' || m.apellidos AS monitor_nombre,
-               m.empresa AS monitor_empresa
-        FROM visitas v
-        LEFT JOIN ensayos  e ON v.ensayo_id  = e.id
-        LEFT JOIN monitores m ON v.monitor_id = m.id
-        WHERE 1=1
-    """
-    params = []
-    if estado:
-        q += " AND v.estado = ?"
-        params.append(estado)
+    visitas = pd.DataFrame(_supabase_fetch_all("visitas"))
+    ensayos = pd.DataFrame(_supabase_fetch_all("ensayos"))
+    monitores = pd.DataFrame(_supabase_fetch_all("monitores"))
+
+    cols = [
+        "id", "ensayo_id", "monitor_id", "fecha", "hora", "tipo", "estado", "notas",
+        "ensayo_codigo", "ensayo_nombre", "monitor_nombre", "monitor_empresa",
+    ]
+    if visitas.empty:
+        return pd.DataFrame(columns=cols)
+
+    if not ensayos.empty:
+        ensayos = ensayos.rename(columns={"id": "ensayo_id_ref", "codigo": "ensayo_codigo", "nombre": "ensayo_nombre"})
+        visitas = visitas.merge(
+            ensayos[["ensayo_id_ref", "ensayo_codigo", "ensayo_nombre"]],
+            left_on="ensayo_id",
+            right_on="ensayo_id_ref",
+            how="left",
+        ).drop(columns=["ensayo_id_ref"])
+    else:
+        visitas["ensayo_codigo"] = ""
+        visitas["ensayo_nombre"] = ""
+
+    if not monitores.empty:
+        monitores = monitores.rename(columns={"id": "monitor_id_ref", "empresa": "monitor_empresa"})
+        if "nombre" not in monitores.columns:
+            monitores["nombre"] = ""
+        if "apellidos" not in monitores.columns:
+            monitores["apellidos"] = ""
+        monitores["monitor_nombre"] = (
+            monitores["nombre"].fillna("") + " " + monitores["apellidos"].fillna("")
+        ).str.strip()
+        visitas = visitas.merge(
+            monitores[["monitor_id_ref", "monitor_nombre", "monitor_empresa"]],
+            left_on="monitor_id",
+            right_on="monitor_id_ref",
+            how="left",
+        ).drop(columns=["monitor_id_ref"])
+    else:
+        visitas["monitor_nombre"] = ""
+        visitas["monitor_empresa"] = ""
+
+    estado_n = _norm_text(estado)
+    texto_n = _norm_text(texto)
+
+    if estado_n:
+        visitas = visitas[visitas["estado"].fillna("").str.lower() == estado_n]
+
     if ensayo_id:
-        q += " AND v.ensayo_id = ?"
-        params.append(ensayo_id)
+        visitas = visitas[visitas["ensayo_id"] == ensayo_id]
+
     if desde:
-        q += " AND v.fecha >= ?"
-        params.append(desde)
+        visitas = visitas[visitas["fecha"].fillna("") >= desde]
+
     if hasta:
-        q += " AND v.fecha <= ?"
-        params.append(hasta)
-    if texto:
-        q += """ AND (LOWER(m.nombre || ' ' || m.apellidos) LIKE LOWER(?)
-                  OR LOWER(e.codigo) LIKE LOWER(?) OR LOWER(e.nombre) LIKE LOWER(?)
-                  OR LOWER(v.tipo) LIKE LOWER(?))"""
-        t = f"%{texto}%"
-        params.extend([t, t, t, t])
-    q += " ORDER BY v.fecha DESC, v.hora DESC"
-    try:
-        df = pd.read_sql_query(q, conn, params=params)
-    except Exception:
-        df = pd.DataFrame()
-    conn.close()
-    return df
+        visitas = visitas[visitas["fecha"].fillna("") <= hasta]
+
+    if texto_n:
+        text_block = (
+            visitas["monitor_nombre"].fillna("") + " "
+            + visitas["ensayo_codigo"].fillna("") + " "
+            + visitas["ensayo_nombre"].fillna("") + " "
+            + visitas["tipo"].fillna("")
+        ).str.lower()
+        visitas = visitas[text_block.str.contains(texto_n, regex=False)]
+
+    if "hora" not in visitas.columns:
+        visitas["hora"] = ""
+
+    visitas = visitas.sort_values(["fecha", "hora"], ascending=[False, False])
+    for c in cols:
+        if c not in visitas.columns:
+            visitas[c] = ""
+    return visitas[cols]
 
 
 def get_visita_by_id(vid):
-    conn = _get_conn()
-    row = conn.execute("SELECT * FROM visitas WHERE id = ?", (vid,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return _supabase_get_by_id("visitas", vid)
 
 
 def create_visita(data):
-    conn = _get_conn()
-    conn.execute("""
-        INSERT INTO visitas (ensayo_id, monitor_id, fecha, hora, tipo, estado, notas)
-        VALUES (:ensayo_id, :monitor_id, :fecha, :hora, :tipo, :estado, :notas)
-    """, data)
-    conn.commit()
-    conn.close()
+    _validar_limites_visita(data.get("fecha", ""))
+    _sb().table("visitas").insert(data).execute()
 
 
 def update_visita(vid, data):
-    conn = _get_conn()
-    conn.execute("""
-        UPDATE visitas SET ensayo_id=:ensayo_id, monitor_id=:monitor_id, fecha=:fecha,
-        hora=:hora, tipo=:tipo, estado=:estado, notas=:notas,
-        actualizado_en=datetime('now','localtime')
-        WHERE id=:id
-    """, {**data, 'id': vid})
-    conn.commit()
-    conn.close()
+    _validar_limites_visita(data.get("fecha", ""), exclude_visita_id=vid)
+    data = dict(data)
+    data["actualizado_en"] = datetime.utcnow().isoformat()
+    _sb().table("visitas").update(data).eq("id", vid).execute()
 
 
 def delete_visita(vid):
-    conn = _get_conn()
-    conn.execute("DELETE FROM visitas WHERE id = ?", (vid,))
-    conn.commit()
-    conn.close()
+    _sb().table("visitas").delete().eq("id", vid).execute()
 
 
-# ── ESTADÍSTICAS ──────────────────────────────────────────────────────────────
+# ── ESTADISTICAS ──────────────────────────────────────────────────────────────
 
 def get_stats():
-    conn = _get_conn()
+    df = get_visitas_df()
+    ensayos = get_ensayos(estado="activo")
     mes = date.today().strftime('%Y-%m')
-    stats = {
-        'total_mes': conn.execute(
-            "SELECT COUNT(*) FROM visitas WHERE fecha LIKE ?", (f"{mes}%",)).fetchone()[0],
-        'pendientes': conn.execute(
-            "SELECT COUNT(*) FROM visitas WHERE estado IN ('pendiente','confirmada')").fetchone()[0],
-        'realizadas': conn.execute(
-            "SELECT COUNT(*) FROM visitas WHERE estado = 'realizada'").fetchone()[0],
-        'ensayos_activos': conn.execute(
-            "SELECT COUNT(*) FROM ensayos WHERE estado = 'activo'").fetchone()[0],
+
+    if df.empty:
+        total_mes = 0
+        pendientes = 0
+        realizadas = 0
+    else:
+        total_mes = int(df["fecha"].fillna("").str.startswith(mes).sum())
+        pendientes = int(df["estado"].isin(["pendiente", "confirmada"]).sum())
+        realizadas = int((df["estado"] == "realizada").sum())
+
+    return {
+        'total_mes': total_mes,
+        'pendientes': pendientes,
+        'realizadas': realizadas,
+        'ensayos_activos': len(ensayos),
     }
-    conn.close()
-    return stats
 
 
 def get_proximas_visitas(limit=10):
-    conn = _get_conn()
     hoy = date.today().isoformat()
-    q = """
-        SELECT v.fecha, v.hora, v.tipo, v.estado,
-               m.nombre || ' ' || m.apellidos AS monitor,
-               e.codigo || ' — ' || e.nombre   AS ensayo
-        FROM visitas v
-        LEFT JOIN ensayos  e ON v.ensayo_id  = e.id
-        LEFT JOIN monitores m ON v.monitor_id = m.id
-        WHERE v.fecha >= ? AND v.estado NOT IN ('cancelada', 'realizada')
-        ORDER BY v.fecha, v.hora
-        LIMIT ?
-    """
-    try:
-        df = pd.read_sql_query(q, conn, params=(hoy, limit))
-    except Exception:
-        df = pd.DataFrame()
-    conn.close()
-    return df
+    df = get_visitas_df()
+    if df.empty:
+        return pd.DataFrame(columns=["fecha", "hora", "tipo", "estado", "monitor", "ensayo"])
+
+    base = df[
+        (df["fecha"].fillna("") >= hoy)
+        & (~df["estado"].isin(["cancelada", "realizada"]))
+    ].copy()
+    if base.empty:
+        return pd.DataFrame(columns=["fecha", "hora", "tipo", "estado", "monitor", "ensayo"])
+
+    base["monitor"] = base["monitor_nombre"].fillna("")
+    base["ensayo"] = (
+        base["ensayo_codigo"].fillna("") + " - " + base["ensayo_nombre"].fillna("")
+    ).str.strip(" -")
+    base = base.sort_values(["fecha", "hora"], ascending=[True, True]).head(limit)
+    return base[["fecha", "hora", "tipo", "estado", "monitor", "ensayo"]]
 
 
 def get_resumen_por_ensayo():
-    conn = _get_conn()
-    q = """
-        SELECT e.codigo, e.nombre, e.estado AS estado_ensayo,
-               COUNT(v.id) AS total,
-               SUM(CASE WHEN v.estado IN ('pendiente','confirmada') THEN 1 ELSE 0 END) AS pendientes,
-               SUM(CASE WHEN v.estado = 'realizada'  THEN 1 ELSE 0 END) AS realizadas,
-               SUM(CASE WHEN v.estado = 'cancelada'  THEN 1 ELSE 0 END) AS canceladas
-        FROM ensayos e
-        LEFT JOIN visitas v ON e.id = v.ensayo_id
-        GROUP BY e.id
-        ORDER BY e.codigo
-    """
-    try:
-        df = pd.read_sql_query(q, conn)
-    except Exception:
-        df = pd.DataFrame()
-    conn.close()
-    return df
+    ensayos = pd.DataFrame(get_ensayos())
+    visitas = get_visitas_df()
+    if ensayos.empty:
+        return pd.DataFrame(columns=[
+            "codigo", "nombre", "estado_ensayo", "total", "pendientes", "realizadas", "canceladas"
+        ])
 
+    if visitas.empty:
+        ensayos["total"] = 0
+        ensayos["pendientes"] = 0
+        ensayos["realizadas"] = 0
+        ensayos["canceladas"] = 0
+        ensayos = ensayos.rename(columns={"estado": "estado_ensayo"})
+        return ensayos[["codigo", "nombre", "estado_ensayo", "total", "pendientes", "realizadas", "canceladas"]]
 
-# ── BACKUP / RESTORE ──────────────────────────────────────────────────────────
+    grp = visitas.groupby("ensayo_id", dropna=False).agg(
+        total=("id", "count"),
+        pendientes=("estado", lambda s: int(s.isin(["pendiente", "confirmada"]).sum())),
+        realizadas=("estado", lambda s: int((s == "realizada").sum())),
+        canceladas=("estado", lambda s: int((s == "cancelada").sum())),
+    ).reset_index()
 
-def get_db_bytes():
-    if not DB_PATH.exists():
-        return None
-    with open(DB_PATH, 'rb') as f:
-        return f.read()
-
-
-def restore_db_bytes(data: bytes):
-    DB_PATH.parent.mkdir(exist_ok=True)
-    with open(DB_PATH, 'wb') as f:
-        f.write(data)
+    out = ensayos.merge(grp, left_on="id", right_on="ensayo_id", how="left")
+    for c in ["total", "pendientes", "realizadas", "canceladas"]:
+        out[c] = out[c].fillna(0).astype(int)
+    out = out.rename(columns={"estado": "estado_ensayo"})
+    out = out.sort_values("codigo")
+    return out[["codigo", "nombre", "estado_ensayo", "total", "pendientes", "realizadas", "canceladas"]]
