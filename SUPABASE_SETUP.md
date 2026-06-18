@@ -71,7 +71,7 @@ Nota: para produccion conviene mantener RLS activado y autenticar usuarios.
 
 #### Para Supabase: Obtener DATABASE_URL correcto
 
-**⚠️ IMPORTANTE: Usa la conexión directa (puerto 5432), NO el pooler (puerto 6543)**
+**⚠️ IMPORTANTE: Prioriza conexión directa (5432). Si tu entorno no soporta IPv6, usa pooler.**
 
 **Pasos:**
 
@@ -80,8 +80,9 @@ Nota: para produccion conviene mantener RLS activado y autenticar usuarios.
 3. Selecciona **Settings**
 4. Ve a la pestaña **Database**
 5. En **Connection string**, selecciona **URI** del dropdown
-6. Verifica que sea el formato directo: `postgresql://postgres:[PASSWORD]@db.[PROJECT_ID].supabase.co:5432/postgres`
-   - ⚠️ **NO** uses `aws-...pooler.supabase.com:6543` (ese es el pooler)
+6. Verifica uno de estos formatos:
+  - Directa: `postgresql://postgres:[PASSWORD]@db.[PROJECT_ID].supabase.co:5432/postgres`
+  - Pooler: `postgresql://postgres.[PROJECT_ID]:[PASSWORD]@aws-...pooler.supabase.com:6543/postgres`
 7. Copia la cadena completa
 8. Si no sabes la contraseña, ve a **Database** → **Reset database password**
 9. En tu terminal local, prueba:
@@ -131,13 +132,12 @@ En el sidebar debe aparecer:
 
 **Causas comunes:**
 
-1. **Error Supabase: "tenant/user postgres.XXXX not found"**
-   - ❌ Estás usando el **pooler** (puerto 6543) o la contraseña es incorrecta
+1. **Error Supabase: "tenant/user ... not found"**
+   - ❌ Usuario/host no corresponde al tipo de conexión (directa vs pooler) o contraseña incorrecta
    - ✅ **Solución:**
-     - Usa la conexión **directa** (puerto 5432), no el pooler (6543)
-     - Copia el CONNECTION STRING de Supabase correctamente:
-       - Ve a Settings → Database → Connection string → URI
-       - Debe ser: `postgresql://postgres:PASSWORD@db.[PROJECT_ID].supabase.co:5432/postgres`
+     - Copia el CONNECTION STRING de Supabase desde Connect → Direct → Type: URI
+     - Si usas **directa**: usuario `postgres` + host `db.[PROJECT_ID].supabase.co` + puerto 5432
+     - Si usas **pooler**: usuario `postgres.[PROJECT_ID]` + host `...pooler.supabase.com` + puerto 6543
      - Si olvidaste la contraseña: Settings → Database → Reset database password
      - Reemplaza `[PASSWORD]` con tu contraseña real (sin corchetes)
 

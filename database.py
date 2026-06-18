@@ -4,6 +4,7 @@ Gestion de Visitas de Monitorizacion — Ensayos Clinicos
 """
 import os
 from datetime import date, datetime
+from urllib.parse import urlparse
 
 import pandas as pd
 
@@ -43,10 +44,56 @@ def _using_postgres():
     return bool(DATABASE_URL)
 
 
+def _validate_database_url():
+    if not DATABASE_URL:
+        return
+
+    url_lower = DATABASE_URL.lower()
+    if "[your-password]" in url_lower or "[password]" in url_lower:
+        raise RuntimeError(
+            "❌ DATABASE_URL inválido: contiene un placeholder de contraseña sin reemplazar.\n\n"
+            "Reemplaza [YOUR-PASSWORD] o [PASSWORD] por tu contraseña real de PostgreSQL en Supabase."
+        )
+
+    try:
+        parsed = urlparse(DATABASE_URL)
+    except Exception as ex:
+        raise RuntimeError(
+            "❌ DATABASE_URL inválido: no se pudo interpretar la URL.\n"
+            "Asegúrate de usar el formato postgresql://usuario:password@host:5432/base_de_datos"
+        ) from ex
+
+    if parsed.scheme not in ("postgresql", "postgres"):
+        raise RuntimeError(
+            "❌ DATABASE_URL inválido: el esquema debe ser postgresql:// o postgres://"
+        )
+
+    hostname = (parsed.hostname or "").lower()
+    username = parsed.username or ""
+
+    # En Supabase pooler normalmente el usuario es postgres.<project_ref>.
+    if "pooler.supabase.com" in hostname and "." not in username:
+        raise RuntimeError(
+            "❌ DATABASE_URL inválido para pooler de Supabase.\n\n"
+            "Cuando usas host pooler.supabase.com, el usuario debe tener este formato:\n"
+            "postgres.<project-ref>\n\n"
+            "Opciones recomendadas:\n"
+            "1. Usar conexión directa: postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres\n"
+            "2. O usar pooler con usuario postgres.<project-ref>"
+        )
+
+    if "supabase.co" in hostname and (parsed.password is None or parsed.password == ""):
+        raise RuntimeError(
+            "❌ DATABASE_URL inválido: falta la contraseña en la URL.\n"
+            "Asegúrate de incluir usuario y contraseña en el formato postgresql://usuario:password@host:puerto/base"
+        )
+
+
 def _pg_conn():
     global _PG_CONN
     if not DATABASE_URL:
         raise RuntimeError("Falta DATABASE_URL para conexion PostgreSQL.")
+    _validate_database_url()
     if psycopg is None:
         raise RuntimeError("Falta la dependencia 'psycopg'. Ejecuta: pip install psycopg[binary]")
     if _PG_CONN is None or _PG_CONN.closed:
@@ -54,21 +101,24 @@ def _pg_conn():
             _PG_CONN = psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True)
         except psycopg.OperationalError as ex:
             error_msg = str(ex).lower()
+            parsed = urlparse(DATABASE_URL)
+            host = (parsed.hostname or "").lower()
+            user = parsed.username or ""
             
             # Errores específicos de Supabase
             if "enotfound" in error_msg and "tenant" in error_msg:
                 raise RuntimeError(
-                    "❌ Error de autenticación Supabase: Usuario/contraseña incorrectos.\n\n"
+                    "❌ Error de conexión Supabase: tenant/usuario no encontrado.\n\n"
                     "📋 Para obtener el DATABASE_URL correcto de Supabase:\n"
-                    "1. Ve a https://supabase.com → Tu proyecto\n"
-                    "2. Abre **Settings** (esquina inferior izquierda)\n"
-                    "3. Ve a **Database** → **Connection string**\n"
-                    "4. Selecciona **URI** en el dropdown\n"
-                    "5. Copia la cadena completa (comienza con postgresql://)\n"
-                    "6. Reemplaza [YOUR-PASSWORD] con tu contraseña de PostgreSQL\n\n"
-                    "⚠️ IMPORTANTE: Si olvidaste la contraseña:\n"
-                    "   En Settings → Database → Reset Database Password\n\n"
-                    "💡 Usa la conexión **directa (puerto 5432)**, no el pooler (puerto 6543)"
+                    "1. Ve a https://supabase.com → Tu proyecto → Connect → Direct\n"
+                    "2. Type: URI\n"
+                    "3. Copia la cadena completa (postgresql://...)\n"
+                    "4. Reemplaza [YOUR-PASSWORD] por tu contraseña real\n\n"
+                    "🔎 Validaciones rápidas:\n"
+                    f"- Host actual: {host or '(vacío)'}\n"
+                    f"- Usuario actual: {user or '(vacío)'}\n"
+                    "- Si usas host pooler.supabase.com, el usuario debe ser postgres.<project-ref>\n"
+                    "- Si usas host db.<project-ref>.supabase.co, el usuario suele ser postgres"
                 ) from ex
             elif "authentication failed" in error_msg or "password authentication" in error_msg:
                 raise RuntimeError(
@@ -83,6 +133,18 @@ def _pg_conn():
                 raise RuntimeError(
                     "❌ Error de conexión: No se puede resolver el host de PostgreSQL.\n"
                     "Verifica que el DATABASE_URL sea válido y el servidor sea accesible."
+                ) from ex
+            elif "cannot assign requested address" in error_msg or "network is unreachable" in error_msg:
+                raise RuntimeError(
+                    "❌ Error de red al conectar con PostgreSQL directo (IPv6).\n\n"
+                    "En Streamlit Cloud suele funcionar mejor el pooler (IPv4).\n"
+                    "Usa en DATABASE_URL este formato:\n"
+                    "postgresql://postgres.<project-ref>:<password>@aws-1-eu-west-1.pooler.supabase.com:6543/postgres\n\n"
+                    "Pasos:\n"
+                    "1. Supabase → Connect → Direct\n"
+                    "2. Connection method: Transaction pooler\n"
+                    "3. Type: URI\n"
+                    "4. Copia la URL completa y pégala en Streamlit Cloud → Manage app → Secrets"
                 ) from ex
             elif "connection refused" in error_msg:
                 raise RuntimeError(
