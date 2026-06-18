@@ -125,7 +125,14 @@ def _pg_conn():
         raise RuntimeError("Falta la dependencia 'psycopg'. Ejecuta: pip install psycopg[binary]")
     if _PG_CONN is None or _PG_CONN.closed:
         try:
-            _PG_CONN = psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True)
+            # PgBouncer/Supabase pooler puede fallar con prepared statements automáticos.
+            # Desactivarlos evita errores como DuplicatePreparedStatement.
+            _PG_CONN = psycopg.connect(
+                DATABASE_URL,
+                row_factory=dict_row,
+                autocommit=True,
+                prepare_threshold=None,
+            )
         except psycopg.OperationalError as ex:
             error_msg = str(ex).lower()
             parsed = urlparse(DATABASE_URL)
