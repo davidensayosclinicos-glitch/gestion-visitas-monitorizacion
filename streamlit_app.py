@@ -14,6 +14,7 @@ from database import (
     get_visitas_df, get_visita_by_id, create_visita, create_visitas_rango, update_visita, delete_visita,
     get_stats, get_proximas_visitas, get_resumen_por_ensayo,
     get_dias_bloqueados, bloquear_dia, bloquear_rango, desbloquear_dia, desbloquear_rango, get_visitas_count_by_date,
+    authenticate_user, list_usuarios_monitor, create_usuario_monitor, set_usuario_activo, reset_usuario_password,
 )
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
@@ -72,6 +73,55 @@ ESTADO_LABEL = {
     "realizada":  "🟢 Realizada",  "cancelada": "🔴 Cancelada",
     "activo":     "🟢 Activo",    "en_pausa":  "🟡 En pausa",  "cerrado": "⚫ Cerrado",
 }
+
+
+def current_user():
+    return st.session_state.get("auth_user")
+
+
+def is_admin():
+    u = current_user() or {}
+    return u.get("rol") == "admin"
+
+
+def is_monitor():
+    u = current_user() or {}
+    return u.get("rol") == "monitor"
+
+
+def scope_ensayo_id():
+    u = current_user() or {}
+    return u.get("ensayo_id")
+
+
+def scope_monitor_id():
+    u = current_user() or {}
+    return u.get("monitor_id")
+
+
+def do_logout():
+    st.session_state.pop("auth_user", None)
+    st.rerun()
+
+
+def require_login():
+    if current_user():
+        return
+
+    st.title("🔐 Acceso a Monitorización")
+    st.caption("Inicia sesión para ver solo la información permitida según tu rol.")
+    with st.form("form_login"):
+        username = st.text_input("Usuario")
+        password = st.text_input("Contraseña", type="password")
+        submitted = st.form_submit_button("Entrar", use_container_width=True, type="primary")
+        if submitted:
+            user = authenticate_user(username, password)
+            if not user:
+                st.error("Usuario o contraseña incorrectos, o cuenta inactiva.")
+            else:
+                st.session_state["auth_user"] = user
+                st.rerun()
+    st.stop()
 
 
 def elabel(e):
@@ -163,7 +213,7 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_calendario_general(section_key: str):
+def render_calendario_general(section_key: str, can_manage_blocks: bool = False):
     st.subheader("🗓️ Calendario general de visitas")
     s1, s2, s3 = st.columns([1, 1, 3])
     anio = s1.selectbox("Año", list(range(2024, 2036)), index=date.today().year - 2024, key=f"{section_key}_anio")
@@ -194,6 +244,9 @@ def render_calendario_general(section_key: str):
         bloqueados_rows = []
 
     st.caption("Leyenda: Libre (sin bloqueo), Bloqueado (0 visitas), Solo 1 visita, Normal (2 visitas).")
+
+    if not can_manage_blocks:
+        return
 
     # Opción de rango de fechas para bloqueos
     col_rango_bloqueo = st.columns(1)[0]
@@ -281,6 +334,9 @@ def render_calendario_general(section_key: str):
         st.info("No hay dias bloqueados en este mes.")
 
 
+# ── AUTENTICACIÓN ─────────────────────────────────────────────────────────────
+require_login()
+
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🏥 Monitorización")
@@ -290,15 +346,24 @@ with st.sidebar:
         st.caption("Backend: 🐘 PostgreSQL (DATABASE_URL)")
     else:
         st.caption("Backend: ☁️ Supabase API")
+    st.caption(f"Usuario: **{current_user().get('username', '')}**")
+    rol_text = "Administrador" if is_admin() else "Monitor"
+    st.caption(f"Rol: {rol_text}")
     st.divider()
+
+    nav_options = ["🏠 Inicio", "📅 Visitas"]
+    if is_admin():
+        nav_options.extend(["👥 Monitores", "📋 Ensayos"])
 
     nav = st.radio(
         "Navegación",
-        ["🏠 Inicio", "📅 Visitas", "👥 Monitores", "📋 Ensayos"],
+        nav_options,
         label_visibility="collapsed",
     )
 
     st.divider()
+    if st.button("Cerrar sesión", use_container_width=True):
+        do_logout()
 
     with st.expander("💾 Copia de seguridad"):
         st.info("Los datos se guardan directamente en Supabase.")
@@ -308,22 +373,39 @@ with st.sidebar:
 
 @st.dialog("Nueva Visita", width="large")
 def dialog_nueva_visita():
-    ensayos   = get_ensayos()
+    if is_admin():
+        ensayos = get_ensayos()
+    else:
+        ensayo_id_scope = scope_ensayo_id()
+        ensayos = [e for e in get_ensayos() if e.get("id") == ensayo_id_scope]
+
     if not ensayos:
         st.warning("⚠️ Primero debes crear al menos un **Ensayo** en la sección correspondiente.")
         return
 
     with st.form("form_nueva_visita"):
-        ei = st.selectbox("Ensayo *", range(len(ensayos)), format_func=lambda i: elabel(ensayos[i]))
-        ensayo_id_sel = ensayos[ei]["id"]
+        if is_admin():
+            ei = st.selectbox("Ensayo *", range(len(ensayos)), format_func=lambda i: elabel(ensayos[i]))
+            ensayo_id_sel = ensayos[ei]["id"]
+        else:
+            ensayo_id_sel = ensayos[0]["id"]
+            st.info(f"Ensayo asignado: **{elabel(ensayos[0])}**")
         
         monitores = get_monitores(ensayo_id=ensayo_id_sel)
         if not monitores:
             st.warning(f"⚠️ No hay monitores asociados a este ensayo. Crea uno en la sección **Monitores**.")
             return
-        
+
         monitor_id_sel = monitores[0]["id"]
-        if len(monitores) == 1:
+        if is_monitor():
+            own_monitor_id = scope_monitor_id()
+            propios = [m for m in monitores if m.get("id") == own_monitor_id]
+            if not propios:
+                st.error("Tu usuario no está vinculado a un monitor válido en este ensayo.")
+                return
+            monitor_id_sel = propios[0]["id"]
+            st.info(f"Monitor asignado: **{mlabel(propios[0])}**")
+        elif len(monitores) == 1:
             st.info(f"📍 Monitor asignado: **{mlabel(monitores[0])}**")
         else:
             mi = st.selectbox("Monitor *", range(len(monitores)), format_func=lambda i: mlabel(monitores[i]))
@@ -389,7 +471,16 @@ def dialog_editar_visita(visita_id: int):
         st.error("Visita no encontrada.")
         return
 
-    ensayos   = get_ensayos()
+    if is_monitor():
+        if v.get("ensayo_id") != scope_ensayo_id() or v.get("monitor_id") != scope_monitor_id():
+            st.error("No tienes permiso para editar esta visita.")
+            return
+
+    if is_admin():
+        ensayos = get_ensayos()
+    else:
+        ensayos = [e for e in get_ensayos() if e.get("id") == scope_ensayo_id()]
+
     e_ids = [e["id"] for e in ensayos]
     e_idx = e_ids.index(v["ensayo_id"])  if v["ensayo_id"]  in e_ids else 0
     
@@ -399,15 +490,30 @@ def dialog_editar_visita(visita_id: int):
     hora_default = datetime.strptime(v["hora"], "%H:%M").time() if v["hora"] else datetime.strptime("09:00", "%H:%M").time()
 
     with st.form("form_editar_visita"):
-        ei = st.selectbox("Ensayo *",   range(len(ensayos)),   index=e_idx, format_func=lambda i: elabel(ensayos[i]))
+        if is_admin():
+            ei = st.selectbox("Ensayo *", range(len(ensayos)), index=e_idx, format_func=lambda i: elabel(ensayos[i]))
+            ensayo_sel = ensayos[ei]["id"]
+        else:
+            ei = 0
+            ensayo_sel = ensayos[0]["id"]
+            st.info(f"Ensayo asignado: **{elabel(ensayos[0])}**")
         
-        monitores_new = get_monitores(ensayo_id=ensayos[ei]["id"])
+        monitores_new = get_monitores(ensayo_id=ensayo_sel)
         m_idx_new = 0
         if monitores_new:
             m_ids_new = [m["id"] for m in monitores_new]
             m_idx_new = m_ids_new.index(v["monitor_id"]) if v["monitor_id"] in m_ids_new else 0
-        
-        if len(monitores_new) == 1:
+
+        if is_monitor():
+            own_monitor_id = scope_monitor_id()
+            propios = [m for m in monitores_new if m.get("id") == own_monitor_id]
+            if not propios:
+                st.error("Tu usuario no está vinculado a un monitor válido en este ensayo.")
+                return
+            st.info(f"Monitor asignado: **{mlabel(propios[0])}**")
+            mi = 0
+            monitores_new = propios
+        elif len(monitores_new) == 1:
             st.info(f"📍 Monitor asignado: **{mlabel(monitores_new[0])}**")
             mi = 0
         else:
@@ -540,6 +646,63 @@ def dialog_editar_monitor(monitor_id: int):
             st.rerun()
 
 
+@st.dialog("Crear usuario de monitor", width="large")
+def dialog_crear_usuario_monitor():
+    if not is_admin():
+        st.error("No tienes permiso para esta operación.")
+        return
+
+    monitores = get_monitores()
+    if not monitores:
+        st.warning("No hay monitores disponibles.")
+        return
+
+    with st.form("form_crear_usuario_monitor"):
+        mi = st.selectbox("Monitor", range(len(monitores)), format_func=lambda i: mlabel(monitores[i]))
+        username = st.text_input("Usuario", placeholder="ej: monitor.maria")
+        password = st.text_input("Contraseña", type="password")
+        activo = st.checkbox("Cuenta activa", value=True)
+
+        if st.form_submit_button("💾 Crear usuario", use_container_width=True, type="primary"):
+            try:
+                create_usuario_monitor(
+                    username=username,
+                    password=password,
+                    monitor_id=monitores[mi]["id"],
+                    activo=activo,
+                )
+            except ValueError as ex:
+                st.error(str(ex))
+                return
+            st.success("✅ Usuario de monitor creado.")
+            st.rerun()
+
+
+@st.dialog("Gestionar usuario", width="large")
+def dialog_gestionar_usuario(user_id: int, username: str, activo_actual: bool):
+    if not is_admin():
+        st.error("No tienes permiso para esta operación.")
+        return
+
+    st.markdown(f"**Usuario:** {username}")
+    c1, c2 = st.columns(2)
+    if c1.button("Activar" if not activo_actual else "Desactivar", use_container_width=True):
+        set_usuario_activo(user_id, not activo_actual)
+        st.success("Estado actualizado.")
+        st.rerun()
+
+    with c2.popover("Reset contraseña", use_container_width=True):
+        new_password = st.text_input("Nueva contraseña", type="password", key=f"pwd_reset_{user_id}")
+        if st.button("Guardar nueva contraseña", key=f"btn_reset_{user_id}", use_container_width=True):
+            try:
+                reset_usuario_password(user_id, new_password)
+            except ValueError as ex:
+                st.error(str(ex))
+                return
+            st.success("Contraseña actualizada.")
+            st.rerun()
+
+
 # ── DIALOGS: ENSAYOS ──────────────────────────────────────────────────────────
 
 @st.dialog("Nuevo Ensayo", width="large")
@@ -631,6 +794,15 @@ def dialog_editar_ensayo(ensayo_id: int):
 
 @st.dialog("Confirmar eliminación")
 def dialog_confirmar_delete(entity_type: str, entity_id: int, entity_name: str):
+    if is_monitor() and entity_type != "visita":
+        st.error("No tienes permiso para esta operación.")
+        return
+    if is_monitor() and entity_type == "visita":
+        v = get_visita_by_id(entity_id)
+        if not v or v.get("ensayo_id") != scope_ensayo_id() or v.get("monitor_id") != scope_monitor_id():
+            st.error("No tienes permiso para eliminar esta visita.")
+            return
+
     st.warning(f"¿Eliminar **{entity_name}**?\n\nEsta acción **no se puede deshacer**.")
     c1, c2 = st.columns(2)
     if c1.button("🗑️ Sí, eliminar", type="primary", use_container_width=True):
@@ -650,40 +822,81 @@ def dialog_confirmar_delete(entity_type: str, entity_id: int, entity_name: str):
 def page_dashboard():
     st.header("🏠 Panel de Control")
 
-    stats = get_stats()
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("📅 Visitas este mes",          stats["total_mes"])
-    c2.metric("⏳ Pendientes / Confirmadas",   stats["pendientes"])
-    c3.metric("✅ Realizadas (total)",         stats["realizadas"])
-    c4.metric("🔬 Ensayos activos",            stats["ensayos_activos"])
+    if is_admin():
+        stats = get_stats()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("📅 Visitas este mes", stats["total_mes"])
+        c2.metric("⏳ Pendientes / Confirmadas", stats["pendientes"])
+        c3.metric("✅ Realizadas (total)", stats["realizadas"])
+        c4.metric("🔬 Ensayos activos", stats["ensayos_activos"])
+
+        st.divider()
+        render_calendario_general("home", can_manage_blocks=True)
+
+        st.divider()
+
+        col_a, col_b = st.columns([3, 2])
+
+        with col_a:
+            st.subheader("📅 Próximas Visitas")
+            df_prox = get_proximas_visitas(10)
+            if df_prox.empty:
+                st.info("No hay visitas próximas programadas.")
+            else:
+                df_prox["fecha"] = pd.to_datetime(df_prox["fecha"]).dt.strftime("%d/%m/%Y")
+                df_prox["estado"] = df_prox["estado"].map(ESTADO_LABEL)
+                df_prox.columns = ["Fecha", "Hora", "Tipo", "Estado", "Monitor", "Ensayo"]
+                st.dataframe(df_prox, use_container_width=True, hide_index=True)
+
+        with col_b:
+            st.subheader("📋 Resumen por Ensayo")
+            df_res = get_resumen_por_ensayo()
+            if df_res.empty:
+                st.info("Sin datos.")
+            else:
+                df_res["estado_ensayo"] = df_res["estado_ensayo"].map(ESTADO_LABEL)
+                df_res.columns = ["Código", "Nombre", "Estado", "Total", "Pend.", "Realiz.", "Cancel."]
+                st.dataframe(df_res, use_container_width=True, hide_index=True)
+        return
+
+    ensayo_id = scope_ensayo_id()
+    monitor_id = scope_monitor_id()
+    df_own = get_visitas_df(ensayo_id=ensayo_id)
+    mes = date.today().strftime("%Y-%m")
+
+    total_mes = int(df_own["fecha"].fillna("").str.startswith(mes).sum()) if not df_own.empty else 0
+    pendientes = int(df_own["estado"].isin(["pendiente", "confirmada"]).sum()) if not df_own.empty else 0
+    propias = df_own[df_own["monitor_id"] == monitor_id] if not df_own.empty else pd.DataFrame()
+    propias_pend = int(propias["estado"].isin(["pendiente", "confirmada"]).sum()) if not propias.empty else 0
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("📅 Visitas de tu ensayo (mes)", total_mes)
+    c2.metric("⏳ Pendientes en tu ensayo", pendientes)
+    c3.metric("👤 Pendientes tuyas", propias_pend)
 
     st.divider()
-    render_calendario_general("home")
+    st.subheader("🗓️ Disponibilidad general")
+    st.caption("Solo se muestra disponibilidad del calendario (hueco o no).")
+    render_calendario_general("home_monitor", can_manage_blocks=False)
 
     st.divider()
+    st.subheader("📅 Tus próximas visitas")
+    if propias.empty:
+        st.info("No tienes visitas próximas programadas.")
+        return
 
-    col_a, col_b = st.columns([3, 2])
+    hoy = date.today().isoformat()
+    prox = propias[(propias["fecha"].fillna("") >= hoy) & (~propias["estado"].isin(["cancelada", "realizada"]))].copy()
+    if prox.empty:
+        st.info("No tienes visitas próximas programadas.")
+        return
 
-    with col_a:
-        st.subheader("📅 Próximas Visitas")
-        df_prox = get_proximas_visitas(10)
-        if df_prox.empty:
-            st.info("No hay visitas próximas programadas.")
-        else:
-            df_prox["fecha"] = pd.to_datetime(df_prox["fecha"]).dt.strftime("%d/%m/%Y")
-            df_prox["estado"] = df_prox["estado"].map(ESTADO_LABEL)
-            df_prox.columns = ["Fecha", "Hora", "Tipo", "Estado", "Monitor", "Ensayo"]
-            st.dataframe(df_prox, use_container_width=True, hide_index=True)
-
-    with col_b:
-        st.subheader("📋 Resumen por Ensayo")
-        df_res = get_resumen_por_ensayo()
-        if df_res.empty:
-            st.info("Sin datos.")
-        else:
-            df_res["estado_ensayo"] = df_res["estado_ensayo"].map(ESTADO_LABEL)
-            df_res.columns = ["Código", "Nombre", "Estado", "Total", "Pend.", "Realiz.", "Cancel."]
-            st.dataframe(df_res, use_container_width=True, hide_index=True)
+    prox = prox.sort_values(["fecha", "hora"], ascending=[True, True]).head(10)
+    prox_show = prox[["fecha", "hora", "tipo", "estado", "notas"]].copy()
+    prox_show["fecha"] = pd.to_datetime(prox_show["fecha"]).dt.strftime("%d/%m/%Y")
+    prox_show["estado"] = prox_show["estado"].map(ESTADO_LABEL)
+    prox_show.columns = ["Fecha", "Hora", "Tipo", "Estado", "Notas"]
+    st.dataframe(prox_show, use_container_width=True, hide_index=True)
 
 
 # ── PÁGINA: VISITAS ───────────────────────────────────────────────────────────
@@ -704,13 +917,17 @@ def page_visitas():
         f_estado = c2.selectbox("Estado", [""] + ESTADOS_VISITA,
                                 format_func=lambda x: ESTADO_LABEL.get(x, "Todos los estados"),
                                 label_visibility="collapsed")
-        ensayos_list = get_ensayos()
-        ensayo_opts  = {e["id"]: elabel(e) for e in ensayos_list}
-        f_ensayo_id  = c3.selectbox(
-            "Ensayo", [None] + list(ensayo_opts.keys()),
-            format_func=lambda x: ensayo_opts.get(x, "Todos los ensayos"),
-            label_visibility="collapsed",
-        )
+        if is_admin():
+            ensayos_list = get_ensayos()
+            ensayo_opts  = {e["id"]: elabel(e) for e in ensayos_list}
+            f_ensayo_id  = c3.selectbox(
+                "Ensayo", [None] + list(ensayo_opts.keys()),
+                format_func=lambda x: ensayo_opts.get(x, "Todos los ensayos"),
+                label_visibility="collapsed",
+            )
+        else:
+            f_ensayo_id = scope_ensayo_id()
+            c3.info("Ensayo asignado")
         f_desde = c4.date_input("Desde", value=None, label_visibility="collapsed")
         f_hasta = c5.date_input("Hasta", value=None, label_visibility="collapsed")
 
@@ -722,6 +939,9 @@ def page_visitas():
         hasta=f_hasta.isoformat() if f_hasta else "",
     )
 
+    if is_monitor() and not df.empty:
+        df = df[df["monitor_id"] == scope_monitor_id()].copy()
+
     if df.empty:
         st.info("No hay visitas que coincidan con los filtros.")
         return
@@ -729,22 +949,28 @@ def page_visitas():
     # Exportar CSV
     c_info, c_exp = st.columns([4, 1])
     c_info.caption(f"**{len(df)}** visita(s) encontradas.")
-    csv_data = df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
-    c_exp.download_button(
-        "⬇️ Exportar CSV",
-        data=csv_data,
-        file_name=f"visitas_{date.today()}.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
+    if is_admin():
+        csv_data = df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
+        c_exp.download_button(
+            "⬇️ Exportar CSV",
+            data=csv_data,
+            file_name=f"visitas_{date.today()}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
     # Tabla
     display_cols = ["id", "fecha", "hora", "monitor_nombre", "ensayo_codigo", "tipo", "estado", "notas"]
+    if is_monitor():
+        display_cols = ["id", "fecha", "hora", "tipo", "estado", "notas"]
     df_show = df[display_cols].copy()
     df_show["fecha"]  = pd.to_datetime(df_show["fecha"]).dt.strftime("%d/%m/%Y")
     df_show["estado"] = df_show["estado"].map(ESTADO_LABEL)
     df_show["notas"]  = df_show["notas"].str[:60]
-    df_show.columns   = ["ID", "Fecha", "Hora", "Monitor", "Ensayo", "Tipo", "Estado", "Notas"]
+    if is_admin():
+        df_show.columns = ["ID", "Fecha", "Hora", "Monitor", "Ensayo", "Tipo", "Estado", "Notas"]
+    else:
+        df_show.columns = ["ID", "Fecha", "Hora", "Tipo", "Estado", "Notas"]
 
     event = st.dataframe(
         df_show,
@@ -772,10 +998,60 @@ def page_visitas():
 # ── PÁGINA: MONITORES ─────────────────────────────────────────────────────────
 
 def page_monitores():
+    if not is_admin():
+        st.error("No tienes permiso para acceder a esta pantalla.")
+        return
+
     col_h, col_btn = st.columns([5, 1])
     col_h.header("👥 Monitores")
     if col_btn.button("➕ Nuevo Monitor", use_container_width=True, type="primary"):
         dialog_nuevo_monitor()
+
+    st.divider()
+    cu1, cu2 = st.columns([5, 1])
+    cu1.subheader("🔐 Usuarios de monitores")
+    if cu2.button("➕ Crear usuario", use_container_width=True):
+        dialog_crear_usuario_monitor()
+
+    usuarios = list_usuarios_monitor()
+    if not usuarios:
+        st.info("No hay usuarios creados para monitores.")
+    else:
+        rows = []
+        for u in usuarios:
+            monitor_nom = (f"{u.get('monitor_nombre', '')} {u.get('monitor_apellidos', '')}").strip()
+            ensayo_txt = (f"{u.get('ensayo_codigo', '')} {u.get('ensayo_nombre', '')}").strip()
+            rows.append(
+                {
+                    "_id": u.get("id"),
+                    "Usuario": u.get("username", ""),
+                    "Rol": u.get("rol", ""),
+                    "Estado": "Activo" if int(u.get("activo") or 0) else "Inactivo",
+                    "Monitor": monitor_nom,
+                    "Ensayo": ensayo_txt,
+                }
+            )
+
+        df_u = pd.DataFrame(rows)
+        event_u = st.dataframe(
+            df_u.drop(columns=["_id"]),
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            key="sel_usuarios",
+        )
+
+        sel_u = event_u.selection.rows
+        if sel_u:
+            idx = sel_u[0]
+            user_id = int(df_u.iloc[idx]["_id"])
+            username = df_u.iloc[idx]["Usuario"]
+            activo = df_u.iloc[idx]["Estado"] == "Activo"
+            if st.button("⚙️ Gestionar usuario seleccionado", use_container_width=True):
+                dialog_gestionar_usuario(user_id, username, activo)
+
+    st.divider()
 
     ensayos = get_ensayos()
     c1, c2 = st.columns([2, 3])
@@ -835,6 +1111,10 @@ def page_monitores():
 # ── PÁGINA: ENSAYOS ───────────────────────────────────────────────────────────
 
 def page_ensayos():
+    if not is_admin():
+        st.error("No tienes permiso para acceder a esta pantalla.")
+        return
+
     col_h, col_btn = st.columns([5, 1])
     col_h.header("📋 Ensayos Clínicos")
     if col_btn.button("➕ Nuevo Ensayo", use_container_width=True, type="primary"):

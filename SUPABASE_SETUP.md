@@ -26,6 +26,7 @@ create table if not exists public.ensayos (
 
 create table if not exists public.monitores (
   id bigserial primary key,
+  ensayo_id bigint references public.ensayos(id) on delete set null,
   nombre text not null,
   apellidos text not null,
   empresa text default '',
@@ -54,6 +55,20 @@ create table if not exists public.dias_bloqueados (
   motivo text default '',
   creado_en timestamptz default now()
 );
+
+create table if not exists public.usuarios (
+  id bigserial primary key,
+  username text unique not null,
+  password_hash text not null,
+  rol text not null default 'monitor',
+  monitor_id bigint references public.monitores(id) on delete set null,
+  activo integer default 1,
+  creado_en timestamptz default now()
+);
+
+create unique index if not exists usuarios_monitor_unique
+  on public.usuarios(monitor_id)
+  where monitor_id is not null;
 ```
 
 ## 2) Politicas RLS (entorno de prueba)
@@ -65,7 +80,42 @@ Si no usas autenticacion de usuarios en esta app, para pruebas puedes:
 
 Nota: para produccion conviene mantener RLS activado y autenticar usuarios.
 
+## 2.1) RLS estricto (produccion)
+
+Si quieres blindar permisos en base de datos (ademas del control en la app), usa estos scripts:
+
+1. `sql/2026-06-22_migracion_auth_roles.sql`
+2. `sql/2026-06-22_rls_policies.sql`
+
+Orden recomendado en Supabase SQL Editor:
+
+1. Ejecuta primero `sql/2026-06-22_migracion_auth_roles.sql`.
+2. Verifica que la tabla `usuarios` tiene datos y que el monitor esta enlazado.
+3. Si usas Supabase Auth, rellena `usuarios.auth_uid` con el `auth.users.id` correspondiente.
+4. Ejecuta `sql/2026-06-22_rls_policies.sql`.
+
+Notas importantes:
+- Con RLS estricto, un monitor solo puede leer su ensayo y operar visitas de su propio monitor.
+- `dias_bloqueados` queda en solo lectura para monitor y escritura solo para admin.
+- Si usas la app con `service_role`, recuerda que ese rol puede bypass de RLS.
+- Si quieres que RLS aplique en runtime, usa JWT de usuarios autenticados (`authenticated`) y mapea `auth_uid`.
+
 ## 3) Variables de entorno
+
+### Variables de acceso de administrador (nueva)
+
+Define también estas variables para tu acceso de administrador en la app:
+
+```bash
+export ADMIN_USER="tu_usuario_admin"
+export ADMIN_PASSWORD="tu_password_admin_segura"
+```
+
+En Streamlit Cloud añádelas en **Manage app → Secrets**.
+
+Notas:
+- El rol `admin` puede ver todos los ensayos, bloquear días y gestionar usuarios.
+- Los usuarios `monitor` se crean desde la propia app (pantalla Monitores) y quedan limitados a su ensayo.
 
 ### Opcion A: PostgreSQL directo via DATABASE_URL (Recomendado)
 
@@ -195,6 +245,24 @@ streamlit run streamlit_app.py
 Si funciona localmente pero no en Streamlit Cloud, el problema es la configuración de Secrets.
 
 Si no estan las variables necesarias, la app mostrara un error de configuracion al iniciar.
+
+## 6) Script SQL de migracion
+
+Tambien tienes un script unico de migracion y soporte de roles en:
+
+- `sql/2026-06-22_migracion_auth_roles.sql`
+
+Este script crea/actualiza tablas e indices necesarios para:
+
+- Usuario por monitor
+- Restriccion de un usuario por monitor
+- Soporte opcional de RLS con `auth_uid`
+
+## 7) Checklist de validacion
+
+Para validar admin vs monitor paso a paso, usa:
+
+- `TEST_CHECKLIST_ROLES.md`
 
 ## 8) Rangos de Fechas (Visitas y Bloqueos)
 

@@ -3,6 +3,9 @@ database.py — Capa de acceso a datos (PostgreSQL/Supabase)
 Gestion de Visitas de Monitorizacion — Ensayos Clinicos
 """
 import os
+import hashlib
+import hmac
+import secrets
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -33,6 +36,11 @@ _SUPABASE_CLIENT = None
 _PG_CONN = None
 _ACTIVE_BACKEND = None
 MAX_VISITAS_POR_DIA = 2
+PASSWORD_SCHEME = "pbkdf2_sha256"
+PASSWORD_ITERATIONS = 150_000
+
+ADMIN_USER = os.getenv("ADMIN_USER", "").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 
 
 def _can_use_supabase_api():
@@ -56,6 +64,40 @@ def get_backend_name():
 
 def _norm_text(value):
     return (value or "").strip().lower()
+
+
+def _hash_password(password, salt=None):
+    if not password:
+        raise ValueError("La contraseña no puede estar vacía.")
+    if salt is None:
+        salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_ITERATIONS,
+    ).hex()
+    return f"{PASSWORD_SCHEME}${PASSWORD_ITERATIONS}${salt}${digest}"
+
+
+def _verify_password(password, stored_hash):
+    if not password or not stored_hash:
+        return False
+    try:
+        scheme, iterations_s, salt, expected = stored_hash.split("$", 3)
+        if scheme != PASSWORD_SCHEME:
+            return False
+        iterations = int(iterations_s)
+    except Exception:
+        return False
+
+    check = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        iterations,
+    ).hex()
+    return hmac.compare_digest(check, expected)
 
 
 def _using_postgres():
@@ -467,7 +509,7 @@ def _validar_limites_visita(fecha, monitor_id, exclude_visita_id=None):
 
 def init_db():
     # Verifica conectividad y tablas requeridas.
-    required = ["ensayos", "monitores", "visitas", "dias_bloqueados"]
+    required = ["ensayos", "monitores", "visitas", "dias_bloqueados", "usuarios"]
 
     if _using_postgres():
         try:
@@ -510,6 +552,7 @@ def init_db():
         "monitores": "id",
         "visitas": "id",
         "dias_bloqueados": "fecha",
+        "usuarios": "id",
     }
     for table_name, col in probe_columns.items():
         try:
@@ -522,6 +565,170 @@ def init_db():
             f"Supabase configurado pero faltan tablas o permisos: {names}. "
             "Revisa SUPABASE_SETUP.md y las politicas RLS."
         )
+
+
+# ── AUTENTICACION Y USUARIOS ────────────────────────────────────────────────
+
+def get_usuario_by_username(username):
+    username_n = _norm_text(username)
+    if not username_n:
+        return None
+
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                select id, username, rol, monitor_id, password_hash, activo
+                from usuarios
+                where lower(username) = %s
+                limit 1
+                """,
+                [username_n],
+            )
+            row = cur.fetchone()
+            return row if row else None
+
+    res = (
+        _sb()
+        .table("usuarios")
+        .select("id,username,rol,monitor_id,password_hash,activo")
+        .ilike("username", username_n)
+        .limit(1)
+        .execute()
+    )
+    data = res.data or []
+    if not data:
+        return None
+    # ilike puede devolver coincidencias no exactas; validamos exactitud en Python.
+    for row in data:
+        if _norm_text(row.get("username")) == username_n:
+            return row
+    return None
+
+
+def list_usuarios_monitor():
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                select u.id, u.username, u.rol, u.activo, u.monitor_id,
+                       m.nombre as monitor_nombre,
+                       m.apellidos as monitor_apellidos,
+                       e.codigo as ensayo_codigo,
+                       e.nombre as ensayo_nombre
+                from usuarios u
+                left join monitores m on m.id = u.monitor_id
+                left join ensayos e on e.id = m.ensayo_id
+                order by lower(u.username)
+                """
+            )
+            return cur.fetchall() or []
+
+    users = _sb().table("usuarios").select("id,username,rol,activo,monitor_id").execute().data or []
+    if not users:
+        return []
+    monitores = {m.get("id"): m for m in _fetch_all("monitores")}
+    ensayos = {e.get("id"): e for e in _fetch_all("ensayos")}
+    out = []
+    for u in users:
+        m = monitores.get(u.get("monitor_id")) or {}
+        e = ensayos.get(m.get("ensayo_id")) or {}
+        item = dict(u)
+        item["monitor_nombre"] = m.get("nombre", "")
+        item["monitor_apellidos"] = m.get("apellidos", "")
+        item["ensayo_codigo"] = e.get("codigo", "")
+        item["ensayo_nombre"] = e.get("nombre", "")
+        out.append(item)
+    out.sort(key=lambda r: _norm_text(r.get("username")))
+    return out
+
+
+def set_usuario_activo(user_id, activo):
+    _update_row_by_id("usuarios", user_id, {"activo": 1 if bool(activo) else 0})
+
+
+def create_usuario_monitor(username, password, monitor_id, activo=True):
+    username_clean = (username or "").strip()
+    if not username_clean:
+        raise ValueError("El usuario es obligatorio.")
+    if len(password or "") < 8:
+        raise ValueError("La contraseña debe tener al menos 8 caracteres.")
+    if monitor_id is None:
+        raise ValueError("Debes seleccionar un monitor.")
+
+    existing = get_usuario_by_username(username_clean)
+    if existing:
+        raise ValueError("Ese nombre de usuario ya existe.")
+
+    # Asegura un usuario por monitor.
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute("select id from usuarios where monitor_id = %s limit 1", [monitor_id])
+            if cur.fetchone():
+                raise ValueError("Ese monitor ya tiene un usuario creado.")
+    else:
+        rows = _sb().table("usuarios").select("id").eq("monitor_id", monitor_id).limit(1).execute().data or []
+        if rows:
+            raise ValueError("Ese monitor ya tiene un usuario creado.")
+
+    _insert_row(
+        "usuarios",
+        {
+            "username": username_clean,
+            "password_hash": _hash_password(password),
+            "rol": "monitor",
+            "monitor_id": monitor_id,
+            "activo": 1 if bool(activo) else 0,
+        },
+    )
+
+
+def reset_usuario_password(user_id, new_password):
+    if len(new_password or "") < 8:
+        raise ValueError("La contraseña debe tener al menos 8 caracteres.")
+    _update_row_by_id("usuarios", user_id, {"password_hash": _hash_password(new_password)})
+
+
+def authenticate_user(username, password):
+    username_clean = (username or "").strip()
+
+    # Admin por variables de entorno (recomendado para el propietario de la app).
+    if ADMIN_USER and ADMIN_PASSWORD:
+        if _norm_text(username_clean) == _norm_text(ADMIN_USER) and password == ADMIN_PASSWORD:
+            return {
+                "username": ADMIN_USER,
+                "rol": "admin",
+                "monitor_id": None,
+                "ensayo_id": None,
+            }
+
+    user = get_usuario_by_username(username_clean)
+    if not user:
+        return None
+    if not int(user.get("activo") or 0):
+        return None
+    if not _verify_password(password, user.get("password_hash", "")):
+        return None
+
+    role = _norm_text(user.get("rol") or "monitor")
+    if role not in ("admin", "monitor"):
+        role = "monitor"
+
+    ensayo_id = None
+    monitor_id = user.get("monitor_id")
+    if role == "monitor":
+        monitor = get_monitor_by_id(monitor_id) if monitor_id is not None else None
+        if not monitor or monitor.get("ensayo_id") is None:
+            return None
+        ensayo_id = monitor.get("ensayo_id")
+
+    return {
+        "id": user.get("id"),
+        "username": user.get("username"),
+        "rol": role,
+        "monitor_id": monitor_id,
+        "ensayo_id": ensayo_id,
+    }
 
 
 # ── ENSAYOS ───────────────────────────────────────────────────────────────────
