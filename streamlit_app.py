@@ -15,6 +15,8 @@ from database import (
     get_stats, get_proximas_visitas, get_resumen_por_ensayo,
     get_dias_bloqueados, bloquear_dia, bloquear_rango, desbloquear_dia, desbloquear_rango, get_visitas_count_by_date,
     authenticate_user, list_usuarios_monitor, create_usuario_monitor, set_usuario_activo, reset_usuario_password, update_usuario_username,
+    documentos_feature_available, create_documento, set_documento_visible_para_usuarios,
+    list_documentos, get_documento_bytes, get_usuarios_monitor_activos, delete_documento,
 )
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
@@ -212,6 +214,150 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
     html += "</tbody></table>"
 
     st.markdown(html, unsafe_allow_html=True)
+
+
+def format_file_size(num_bytes: int):
+    if num_bytes is None:
+        return "0 B"
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    units = ["KB", "MB", "GB"]
+    value = float(num_bytes)
+    for unit in units:
+        value /= 1024.0
+        if value < 1024.0 or unit == units[-1]:
+            return f"{value:.1f} {unit}"
+    return f"{num_bytes} B"
+
+
+def render_tab_documentos(tipo: str, tab_key: str):
+    docs = []
+    current_id = current_user().get("id")
+    if is_admin():
+        docs = list_documentos(tipo=tipo)
+    else:
+        if current_id is None:
+            st.warning("No se puede resolver tu usuario para mostrar documentos visibles.")
+            return
+        docs = list_documentos(tipo=tipo, solo_visibles_para_usuario_id=current_id)
+
+    if is_admin():
+        st.caption("Solo administrador puede subir y asignar visibilidad.")
+        usuarios = get_usuarios_monitor_activos()
+        usuario_opts = {int(u.get("id")): f"{u.get('username', '')} ({u.get('monitor_nombre', '')} {u.get('monitor_apellidos', '')})" for u in usuarios}
+
+        with st.form(f"form_upload_{tab_key}"):
+            archivo = st.file_uploader(
+                "Selecciona archivo",
+                type=["pdf", "doc", "docx", "png", "jpg", "jpeg"],
+                key=f"upload_{tab_key}",
+            )
+            visibles = st.multiselect(
+                "Usuarios que pueden verlo",
+                options=list(usuario_opts.keys()),
+                format_func=lambda x: usuario_opts.get(x, str(x)),
+                key=f"vis_{tab_key}",
+                placeholder="Selecciona usuarios",
+            )
+            submit = st.form_submit_button("Subir documento", type="primary", use_container_width=True)
+            if submit:
+                if archivo is None:
+                    st.error("Debes seleccionar un archivo.")
+                elif not visibles:
+                    st.error("Debes asignar al menos un usuario visible.")
+                else:
+                    try:
+                        contenido = archivo.read()
+                        doc_id = create_documento(
+                            tipo=tipo,
+                            nombre_archivo=archivo.name,
+                            mime_type=getattr(archivo, "type", "application/octet-stream") or "application/octet-stream",
+                            contenido_bytes=contenido,
+                            subido_por_user_id=current_id,
+                        )
+                        set_documento_visible_para_usuarios(doc_id, visibles)
+                        st.success("Documento subido y visibilidad asignada.")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"No se pudo subir el documento: {ex}")
+    else:
+        st.caption("Aquí solo ves los documentos que el administrador te haya asignado.")
+
+    st.divider()
+    st.subheader("Documentos")
+    if not docs:
+        st.info("No hay documentos para este tipo.")
+        return
+
+    for d in docs:
+        doc_id = int(d.get("id"))
+        nombre = d.get("nombre_archivo", "archivo")
+        mime_type = d.get("mime_type", "application/octet-stream")
+        contenido = None
+        try:
+            contenido = get_documento_bytes(doc_id)
+        except Exception:
+            contenido = None
+        size_bytes = len(contenido or b"")
+
+        visible_para = d.get("visible_para", "")
+        total_visibles = int(d.get("total_visibles") or 0)
+        creado_en = d.get("creado_en", "")
+
+        with st.container(border=True):
+            h1, h2, h3 = st.columns([5, 2, 2])
+            h1.markdown(f"**{nombre}**")
+            h1.caption(f"{mime_type} · {format_file_size(size_bytes)}")
+            if creado_en:
+                h2.caption(f"Subido: {str(creado_en)[:19].replace('T', ' ')}")
+            if is_admin():
+                h2.caption(f"Visible para: {total_visibles} usuario(s)")
+                if visible_para:
+                    h2.caption(visible_para)
+
+            if contenido:
+                h3.download_button(
+                    "Descargar",
+                    data=contenido,
+                    file_name=nombre,
+                    mime=mime_type,
+                    key=f"dl_{tab_key}_{doc_id}",
+                    use_container_width=True,
+                )
+            else:
+                h3.warning("Sin contenido")
+
+            if is_admin():
+                usuarios = get_usuarios_monitor_activos()
+                usuario_opts = {
+                    int(u.get("id")): f"{u.get('username', '')} ({u.get('monitor_nombre', '')} {u.get('monitor_apellidos', '')})"
+                    for u in usuarios
+                }
+                current_vis = [int(uid) for uid in (d.get("visible_user_ids") or []) if uid is not None]
+
+                e1, e2 = st.columns([4, 1])
+                nuevos_vis = e1.multiselect(
+                    f"Visibilidad ({nombre})",
+                    options=list(usuario_opts.keys()),
+                    default=current_vis,
+                    format_func=lambda x: usuario_opts.get(x, str(x)),
+                    key=f"edit_vis_{tab_key}_{doc_id}",
+                )
+                if e2.button("Guardar", key=f"save_vis_{tab_key}_{doc_id}", use_container_width=True):
+                    try:
+                        set_documento_visible_para_usuarios(doc_id, nuevos_vis)
+                        st.success("Visibilidad actualizada.")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"No se pudo actualizar visibilidad: {ex}")
+
+                if e2.button("Eliminar", key=f"del_doc_{tab_key}_{doc_id}", use_container_width=True):
+                    try:
+                        delete_documento(doc_id)
+                        st.success("Documento eliminado.")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"No se pudo eliminar: {ex}")
 
 
 def render_calendario_general(section_key: str, can_manage_blocks: bool = False):
@@ -437,7 +583,9 @@ with st.sidebar:
 
     nav_options = ["🏠 Inicio", "📅 Visitas"]
     if is_admin():
-        nav_options.extend(["👥 Monitores", "📋 Ensayos", "🔑 Usuarios"])
+        nav_options.extend(["👥 Monitores", "📋 Ensayos", "📁 Documentos", "🔑 Usuarios"])
+    else:
+        nav_options.append("📁 Documentos")
 
     nav = st.radio(
         "Navegación",
@@ -1451,12 +1599,37 @@ def page_usuarios():
     )
 
 
+# ── PÁGINA: DOCUMENTOS ───────────────────────────────────────────────────────
+
+def page_documentos():
+    st.header("📁 Documentos")
+    st.caption("Pestañas de documentación: CV, GCP y certificados de calibración.")
+
+    if not documentos_feature_available():
+        st.error("Falta migración SQL para documentos. Aplica el script en la carpeta sql y recarga la app.")
+        return
+
+    tab_cv, tab_gcp, tab_cal = st.tabs([
+        "CV",
+        "GCP",
+        "Certificados de calibración",
+    ])
+
+    with tab_cv:
+        render_tab_documentos("cv", "cv")
+    with tab_gcp:
+        render_tab_documentos("gcp", "gcp")
+    with tab_cal:
+        render_tab_documentos("calibracion", "calibracion")
+
+
 # ── ROUTER ────────────────────────────────────────────────────────────────────
 pages = {
     "🏠 Inicio":    page_dashboard,
     "📅 Visitas":   page_visitas,
     "👥 Monitores": page_monitores,
     "📋 Ensayos":   page_ensayos,
+    "📁 Documentos": page_documentos,
     "🔑 Usuarios":  page_usuarios,
 }
 pages[nav]()

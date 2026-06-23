@@ -34,6 +34,7 @@ def main():
     migrations = [
         ("2026-06-22_migracion_auth_roles.sql", "Crear tablas y estructura de roles"),
         ("2026-06-22_rls_policies.sql", "Aplicar políticas de RLS"),
+        ("2026-06-23_documentos_visibilidad.sql", "Crear tablas de documentos y visibilidad por usuario"),
     ]
     
     try:

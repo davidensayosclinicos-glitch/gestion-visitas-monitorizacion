@@ -6,6 +6,7 @@ import os
 import hashlib
 import hmac
 import secrets
+import base64
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -38,6 +39,7 @@ _ACTIVE_BACKEND = None
 MAX_VISITAS_POR_DIA = 2
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 150_000
+TIPOS_DOCUMENTO = ("cv", "gcp", "calibracion")
 
 ADMIN_USER = os.getenv("ADMIN_USER", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
@@ -260,6 +262,26 @@ def _fetch_all(table_name):
             return cur.fetchall() or []
     res = _sb().table(table_name).select("*").execute()
     return res.data or []
+
+
+def _table_exists(table_name):
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                select 1
+                from information_schema.tables
+                where table_schema = 'public' and table_name = %s
+                limit 1
+                """,
+                [table_name],
+            )
+            return bool(cur.fetchone())
+    try:
+        _sb().table(table_name).select("id").limit(1).execute()
+        return True
+    except Exception:
+        return False
 
 
 def _get_by_id(table_name, entity_id):
@@ -710,6 +732,7 @@ def authenticate_user(username, password):
     if ADMIN_USER and ADMIN_PASSWORD:
         if _norm_text(username_clean) == _norm_text(ADMIN_USER) and password == ADMIN_PASSWORD:
             return {
+                "id": None,
                 "username": ADMIN_USER,
                 "rol": "admin",
                 "monitor_id": None,
@@ -1038,3 +1061,209 @@ def get_resumen_por_ensayo():
     out = out.rename(columns={"estado": "estado_ensayo"})
     out = out.sort_values("codigo")
     return out[["codigo", "nombre", "estado_ensayo", "total", "pendientes", "realizadas", "canceladas"]]
+
+
+# ── DOCUMENTOS ───────────────────────────────────────────────────────────────
+
+def documentos_feature_available():
+    return _table_exists("documentos") and _table_exists("documentos_visibilidad")
+
+
+def _validar_tipo_documento(tipo):
+    t = _norm_text(tipo)
+    if t not in TIPOS_DOCUMENTO:
+        raise ValueError("Tipo de documento no válido.")
+    return t
+
+
+def _encode_bytes_to_b64(content_bytes):
+    return base64.b64encode(content_bytes).decode("ascii")
+
+
+def _decode_b64_to_bytes(content_b64):
+    return base64.b64decode((content_b64 or "").encode("ascii"))
+
+
+def create_documento(tipo, nombre_archivo, mime_type, contenido_bytes, subido_por_user_id=None):
+    if not documentos_feature_available():
+        raise RuntimeError("La funcionalidad de documentos no está disponible. Falta aplicar migración SQL.")
+
+    tipo_n = _validar_tipo_documento(tipo)
+    nombre_clean = (nombre_archivo or "").strip()
+    if not nombre_clean:
+        raise ValueError("El nombre del archivo es obligatorio.")
+    if not contenido_bytes:
+        raise ValueError("El archivo está vacío.")
+
+    payload = {
+        "tipo": tipo_n,
+        "nombre_archivo": nombre_clean,
+        "mime_type": (mime_type or "application/octet-stream").strip(),
+        "contenido_b64": _encode_bytes_to_b64(contenido_bytes),
+        "subido_por_user_id": subido_por_user_id,
+    }
+
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                insert into documentos (tipo, nombre_archivo, mime_type, contenido_b64, subido_por_user_id)
+                values (%s, %s, %s, %s, %s)
+                returning id
+                """,
+                [
+                    payload["tipo"],
+                    payload["nombre_archivo"],
+                    payload["mime_type"],
+                    payload["contenido_b64"],
+                    payload["subido_por_user_id"],
+                ],
+            )
+            row = cur.fetchone() or {}
+            return row.get("id")
+
+    res = _sb().table("documentos").insert(payload).execute()
+    data = res.data or []
+    if not data:
+        raise RuntimeError("No se pudo crear el documento.")
+    return data[0].get("id")
+
+
+def set_documento_visible_para_usuarios(documento_id, user_ids):
+    if not documentos_feature_available():
+        raise RuntimeError("La funcionalidad de documentos no está disponible. Falta aplicar migración SQL.")
+
+    ids = []
+    for uid in (user_ids or []):
+        if uid is None:
+            continue
+        try:
+            ids.append(int(uid))
+        except (TypeError, ValueError):
+            continue
+    ids = sorted(set(ids))
+
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute("delete from documentos_visibilidad where documento_id = %s", [documento_id])
+            for uid in ids:
+                cur.execute(
+                    """
+                    insert into documentos_visibilidad (documento_id, usuario_id)
+                    values (%s, %s)
+                    on conflict (documento_id, usuario_id) do nothing
+                    """,
+                    [documento_id, uid],
+                )
+        return
+
+    _sb().table("documentos_visibilidad").delete().eq("documento_id", documento_id).execute()
+    if ids:
+        rows = [{"documento_id": documento_id, "usuario_id": uid} for uid in ids]
+        _sb().table("documentos_visibilidad").insert(rows).execute()
+
+
+def list_documentos(tipo=None, solo_visibles_para_usuario_id=None):
+    if not documentos_feature_available():
+        return []
+
+    tipo_n = _norm_text(tipo)
+    if tipo_n and tipo_n not in TIPOS_DOCUMENTO:
+        return []
+
+    if _using_postgres():
+        where = []
+        params = []
+        if tipo_n:
+            where.append("d.tipo = %s")
+            params.append(tipo_n)
+        if solo_visibles_para_usuario_id is not None:
+            where.append(
+                "exists (select 1 from documentos_visibilidad dv2 where dv2.documento_id = d.id and dv2.usuario_id = %s)"
+            )
+            params.append(int(solo_visibles_para_usuario_id))
+
+        query = """
+            select
+                d.id,
+                d.tipo,
+                d.nombre_archivo,
+                d.mime_type,
+                d.contenido_b64,
+                d.subido_por_user_id,
+                d.creado_en,
+                coalesce(string_agg(distinct u.username, ', ' order by u.username), '') as visible_para,
+                coalesce(array_agg(distinct dv.usuario_id) filter (where dv.usuario_id is not null), '{}') as visible_user_ids,
+                count(distinct dv.usuario_id) as total_visibles
+            from documentos d
+            left join documentos_visibilidad dv on dv.documento_id = d.id
+            left join usuarios u on u.id = dv.usuario_id
+        """
+        if where:
+            query += " where " + " and ".join(where)
+        query += " group by d.id order by d.creado_en desc, d.id desc"
+
+        with _pg_conn().cursor() as cur:
+            cur.execute(query, params)
+            return cur.fetchall() or []
+
+    docs = _sb().table("documentos").select("*").execute().data or []
+    vis = _sb().table("documentos_visibilidad").select("documento_id,usuario_id").execute().data or []
+    users = _sb().table("usuarios").select("id,username").execute().data or []
+
+    user_map = {u.get("id"): u.get("username", "") for u in users}
+    vis_by_doc = {}
+    for row in vis:
+        doc_id = row.get("documento_id")
+        user_id = row.get("usuario_id")
+        if doc_id is None or user_id is None:
+            continue
+        vis_by_doc.setdefault(doc_id, set()).add(user_id)
+
+    out = []
+    for d in docs:
+        if tipo_n and _norm_text(d.get("tipo")) != tipo_n:
+            continue
+        visible_set = vis_by_doc.get(d.get("id"), set())
+        if solo_visibles_para_usuario_id is not None and int(solo_visibles_para_usuario_id) not in visible_set:
+            continue
+        usernames = sorted([user_map.get(uid, "") for uid in visible_set if user_map.get(uid, "")])
+        item = dict(d)
+        item["visible_para"] = ", ".join(usernames)
+        item["visible_user_ids"] = sorted(list(visible_set))
+        item["total_visibles"] = len(visible_set)
+        out.append(item)
+
+    out.sort(key=lambda r: (_norm_text(r.get("creado_en")), int(r.get("id") or 0)), reverse=True)
+    return out
+
+
+def get_documento_by_id(documento_id):
+    if not documentos_feature_available():
+        return None
+    return _get_by_id("documentos", documento_id)
+
+
+def delete_documento(documento_id):
+    if not documentos_feature_available():
+        raise RuntimeError("La funcionalidad de documentos no está disponible. Falta aplicar migración SQL.")
+    _delete_row_by_id("documentos", documento_id)
+
+
+def get_usuarios_monitor_activos():
+    rows = list_usuarios_monitor()
+    out = []
+    for r in rows:
+        if _norm_text(r.get("rol")) != "monitor":
+            continue
+        if int(r.get("activo") or 0) != 1:
+            continue
+        out.append(r)
+    return out
+
+
+def get_documento_bytes(documento_id):
+    row = get_documento_by_id(documento_id)
+    if not row:
+        return None
+    return _decode_b64_to_bytes(row.get("contenido_b64", ""))
