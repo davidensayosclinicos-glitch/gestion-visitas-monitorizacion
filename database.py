@@ -1267,3 +1267,193 @@ def get_documento_bytes(documento_id):
     if not row:
         return None
     return _decode_b64_to_bytes(row.get("contenido_b64", ""))
+
+
+# ── TAREAS (CHAT) ─────────────────────────────────────────────────────────────
+
+def tareas_feature_available():
+    return _table_exists("tareas") and _table_exists("tareas_mensajes")
+
+
+def create_tarea(titulo, descripcion, monitor_id):
+    if not tareas_feature_available():
+        raise RuntimeError("La funcionalidad de tareas no está disponible. Falta aplicar migración SQL.")
+    
+    titulo_clean = (titulo or "").strip()
+    descripcion_clean = (descripcion or "").strip()
+    if not titulo_clean:
+        raise ValueError("El título de la tarea es obligatorio.")
+    if monitor_id is None:
+        raise ValueError("El monitor es obligatorio.")
+    
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                insert into tareas (titulo, descripcion, monitor_id, estado)
+                values (%s, %s, %s, %s)
+                returning id
+                """,
+                [titulo_clean, descripcion_clean, monitor_id, "abierta"],
+            )
+            row = cur.fetchone() or {}
+            return row.get("id")
+    
+    res = _sb().table("tareas").insert({
+        "titulo": titulo_clean,
+        "descripcion": descripcion_clean,
+        "monitor_id": monitor_id,
+        "estado": "abierta",
+    }).execute()
+    data = res.data or []
+    if not data:
+        raise RuntimeError("No se pudo crear la tarea.")
+    return data[0].get("id")
+
+
+def get_tareas_por_monitor(monitor_id):
+    if not tareas_feature_available():
+        return []
+    
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                select id, titulo, descripcion, monitor_id, estado, creado_en, actualizado_en
+                from tareas
+                where monitor_id = %s
+                order by actualizado_en desc, creado_en desc
+                """,
+                [monitor_id],
+            )
+            return cur.fetchall() or []
+    
+    rows = _sb().table("tareas").select("*").eq("monitor_id", monitor_id).order("actualizado_en", desc=True).execute().data or []
+    return rows
+
+
+def get_todas_tareas():
+    if not tareas_feature_available():
+        return []
+    
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                select t.id, t.titulo, t.descripcion, t.monitor_id, t.estado, t.creado_en, t.actualizado_en,
+                       m.nombre as monitor_nombre, m.apellidos as monitor_apellidos
+                from tareas t
+                left join monitores m on m.id = t.monitor_id
+                order by t.actualizado_en desc, t.creado_en desc
+                """
+            )
+            return cur.fetchall() or []
+    
+    tareas = _sb().table("tareas").select("*").order("actualizado_en", desc=True).execute().data or []
+    monitores = {m.get("id"): m for m in _fetch_all("monitores")}
+    
+    for tarea in tareas:
+        monitor_id = tarea.get("monitor_id")
+        monitor = monitores.get(monitor_id) or {}
+        tarea["monitor_nombre"] = monitor.get("nombre", "")
+        tarea["monitor_apellidos"] = monitor.get("apellidos", "")
+    
+    return tareas
+
+
+def get_tarea_by_id(tarea_id):
+    if not tareas_feature_available():
+        return None
+    return _get_by_id("tareas", tarea_id)
+
+
+def update_estado_tarea(tarea_id, nuevo_estado):
+    if not tareas_feature_available():
+        raise RuntimeError("La funcionalidad de tareas no está disponible. Falta aplicar migración SQL.")
+    
+    estados_validos = ("abierta", "en_coordinacion", "cerrada")
+    if nuevo_estado not in estados_validos:
+        raise ValueError(f"Estado no válido. Debe ser uno de: {', '.join(estados_validos)}")
+    
+    _update_row_by_id("tareas", tarea_id, {
+        "estado": nuevo_estado,
+        "actualizado_en": datetime.utcnow().isoformat(),
+    })
+
+
+def add_mensaje_tarea(tarea_id, usuario_id, contenido, tipo="mensaje"):
+    if not tareas_feature_available():
+        raise RuntimeError("La funcionalidad de tareas no está disponible. Falta aplicar migración SQL.")
+    
+    tarea = get_tarea_by_id(tarea_id)
+    if not tarea:
+        raise ValueError("La tarea no existe.")
+    
+    contenido_clean = (contenido or "").strip()
+    if not contenido_clean:
+        raise ValueError("El contenido del mensaje no puede estar vacío.")
+    
+    tipos_validos = ("mensaje", "sistema")
+    if tipo not in tipos_validos:
+        tipo = "mensaje"
+    
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                insert into tareas_mensajes (tarea_id, usuario_id, contenido, tipo)
+                values (%s, %s, %s, %s)
+                returning id
+                """,
+                [tarea_id, usuario_id, contenido_clean, tipo],
+            )
+            row = cur.fetchone() or {}
+            msg_id = row.get("id")
+    else:
+        res = _sb().table("tareas_mensajes").insert({
+            "tarea_id": tarea_id,
+            "usuario_id": usuario_id,
+            "contenido": contenido_clean,
+            "tipo": tipo,
+        }).execute()
+        data = res.data or []
+        msg_id = data[0].get("id") if data else None
+    
+    # Actualizar timestamp de tarea
+    _update_row_by_id("tareas", tarea_id, {"actualizado_en": datetime.utcnow().isoformat()})
+    
+    return msg_id
+
+
+def get_mensajes_tarea(tarea_id):
+    if not tareas_feature_available():
+        return []
+    
+    if _using_postgres():
+        with _pg_conn().cursor() as cur:
+            cur.execute(
+                """
+                select m.id, m.tarea_id, m.usuario_id, m.contenido, m.tipo, m.creado_en,
+                       u.username
+                from tareas_mensajes m
+                left join usuarios u on u.id = m.usuario_id
+                where m.tarea_id = %s
+                order by m.creado_en asc
+                """,
+                [tarea_id],
+            )
+            return cur.fetchall() or []
+    
+    mensajes = _sb().table("tareas_mensajes").select("*").eq("tarea_id", tarea_id).order("creado_en", desc=False).execute().data or []
+    usuarios = {u.get("id"): u.get("username", "") for u in _fetch_all("usuarios")}
+    
+    for msg in mensajes:
+        msg["username"] = usuarios.get(msg.get("usuario_id"), "")
+    
+    return mensajes
+
+
+def delete_tarea(tarea_id):
+    if not tareas_feature_available():
+        raise RuntimeError("La funcionalidad de tareas no está disponible. Falta aplicar migración SQL.")
+    _delete_row_by_id("tareas", tarea_id)

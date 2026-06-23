@@ -17,6 +17,8 @@ from database import (
     authenticate_user, list_usuarios_monitor, create_usuario_monitor, set_usuario_activo, reset_usuario_password, update_usuario_username,
     documentos_feature_available, create_documento, set_documento_visible_para_usuarios,
     list_documentos, get_documento_bytes, get_usuarios_monitor_activos, delete_documento,
+    tareas_feature_available, create_tarea, get_tareas_por_monitor, get_todas_tareas, get_tarea_by_id,
+    add_mensaje_tarea, get_mensajes_tarea, update_estado_tarea, delete_tarea,
 )
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
@@ -583,9 +585,9 @@ with st.sidebar:
 
     nav_options = ["🏠 Inicio", "📅 Visitas"]
     if is_admin():
-        nav_options.extend(["👥 Monitores", "📋 Ensayos", "📁 Documentos", "🔑 Usuarios"])
+        nav_options.extend(["👥 Monitores", "📋 Ensayos", "📁 Documentos", "� Tareas", "🔑 Usuarios"])
     else:
-        nav_options.append("📁 Documentos")
+        nav_options.extend(["📁 Documentos", "💬 Tareas"])
 
     nav = st.radio(
         "Navegación",
@@ -1623,6 +1625,167 @@ def page_documentos():
         render_tab_documentos("calibracion", "calibracion")
 
 
+# ── PÁGINA: TAREAS (CHAT) ─────────────────────────────────────────────────────
+
+def page_tareas():
+    st.header("💬 Tareas y Coordinación")
+    st.caption("Sistema de tareas en formato chat entre monitores y administrador.")
+    
+    if not tareas_feature_available():
+        st.error("Falta migración SQL para tareas. Aplica el script en la carpeta sql y recarga la app.")
+        return
+    
+    if is_admin():
+        st.subheader("Todas las tareas")
+        tareas = get_todas_tareas()
+        
+        if not tareas:
+            st.info("No hay tareas registradas.")
+            return
+        
+        # Crear tabs por estado
+        tab_abiertas, tab_coordinacion, tab_cerradas = st.tabs(["🟠 Abiertas", "🔵 En coordinación", "🟢 Cerradas"])
+        
+        with tab_abiertas:
+            tareas_abiertas = [t for t in tareas if t.get("estado") == "abierta"]
+            if not tareas_abiertas:
+                st.info("No hay tareas abiertas.")
+            else:
+                for tarea in tareas_abiertas:
+                    render_tarea_chat(tarea, is_admin=True)
+        
+        with tab_coordinacion:
+            tareas_coord = [t for t in tareas if t.get("estado") == "en_coordinacion"]
+            if not tareas_coord:
+                st.info("No hay tareas en coordinación.")
+            else:
+                for tarea in tareas_coord:
+                    render_tarea_chat(tarea, is_admin=True)
+        
+        with tab_cerradas:
+            tareas_cerradas = [t for t in tareas if t.get("estado") == "cerrada"]
+            if not tareas_cerradas:
+                st.info("No hay tareas cerradas.")
+            else:
+                for tarea in tareas_cerradas:
+                    render_tarea_chat(tarea, is_admin=True)
+    else:
+        st.subheader("Mis tareas")
+        monitor_id = scope_monitor_id()
+        if monitor_id is None:
+            st.error("Tu usuario no está vinculado a un monitor válido.")
+            return
+        
+        tareas = get_tareas_por_monitor(monitor_id)
+        if not tareas:
+            st.info("No tienes tareas. Crea una nueva.")
+        else:
+            for tarea in tareas:
+                render_tarea_chat(tarea, is_admin=False, monitor_id=monitor_id)
+        
+        st.divider()
+        st.subheader("➕ Nueva tarea")
+        with st.form("form_nueva_tarea"):
+            titulo = st.text_input("Título *", placeholder="Descripción breve de la tarea")
+            descripcion = st.text_area("Descripción detallada", height=80, placeholder="Explica el problema o solicitud")
+            
+            if st.form_submit_button("Crear tarea", type="primary", use_container_width=True):
+                if not titulo.strip():
+                    st.error("El título es obligatorio.")
+                else:
+                    try:
+                        tarea_id = create_tarea(titulo, descripcion, monitor_id)
+                        st.success(f"Tarea creada. ID: {tarea_id}")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"No se pudo crear la tarea: {ex}")
+
+
+def render_tarea_chat(tarea, is_admin=False, monitor_id=None):
+    tarea_id = int(tarea.get("id"))
+    titulo = tarea.get("titulo", "")
+    descripcion = tarea.get("descripcion", "")
+    estado = tarea.get("estado", "abierta")
+    creado_en = tarea.get("creado_en", "")
+    monitor_nombre = f"{tarea.get('monitor_nombre', '')} {tarea.get('monitor_apellidos', '')}".strip() if is_admin else "Tú"
+    
+    with st.container(border=True):
+        col_h, col_e = st.columns([4, 1])
+        col_h.markdown(f"**{titulo}**")
+        if descripcion:
+            col_h.caption(f"📝 {descripcion[:120]}...")
+        col_h.caption(f"👤 {monitor_nombre} · {creado_en[:10] if creado_en else 'sin fecha'}")
+        
+        # Estado badge
+        estado_labels = {"abierta": "🟠 Abierta", "en_coordinacion": "🔵 En coordinación", "cerrada": "🟢 Cerrada"}
+        col_e.markdown(f"**{estado_labels.get(estado, estado)}**")
+        
+        # Mensajes (chat)
+        mensajes = get_mensajes_tarea(tarea_id)
+        st.markdown("**Conversación:**")
+        if not mensajes:
+            st.caption("*(Sin mensajes aún)*")
+        else:
+            for msg in mensajes:
+                usuario = msg.get("username", "Sistema")
+                contenido = msg.get("contenido", "")
+                tipo = msg.get("tipo", "mensaje")
+                timestamp = msg.get("creado_en", "")
+                
+                if tipo == "sistema":
+                    st.info(f"📌 **[Sistema]** {contenido}")
+                else:
+                    st.markdown(f"**{usuario}** ({timestamp[:10]}): {contenido}")
+        
+        # Agregar respuesta
+        col_m, col_b = st.columns([5, 1])
+        nuevo_msg = col_m.text_input(
+            f"Nuevo mensaje (Tarea {tarea_id})",
+            placeholder="Escribe tu respuesta...",
+            key=f"msg_{tarea_id}",
+            label_visibility="collapsed",
+        )
+        if col_b.button("Enviar", key=f"send_{tarea_id}", use_container_width=True):
+            if nuevo_msg.strip():
+                try:
+                    current_user_id = current_user().get("id")
+                    add_mensaje_tarea(tarea_id, current_user_id, nuevo_msg)
+                    st.success("Mensaje enviado.")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"Error: {ex}")
+        
+        # Opciones (solo admin)
+        if is_admin:
+            st.divider()
+            col_a, col_b, col_c = st.columns(3)
+            
+            # Cambiar estado
+            nuevo_estado = col_a.selectbox(
+                "Cambiar estado",
+                ["abierta", "en_coordinacion", "cerrada"],
+                index=["abierta", "en_coordinacion", "cerrada"].index(estado),
+                key=f"estado_{tarea_id}",
+            )
+            if col_b.button("Actualizar", key=f"update_estado_{tarea_id}", use_container_width=True):
+                try:
+                    update_estado_tarea(tarea_id, nuevo_estado)
+                    st.success("Estado actualizado.")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"Error: {ex}")
+            
+            if col_c.button("🗑️ Eliminar", key=f"del_tarea_{tarea_id}", use_container_width=True):
+                try:
+                    delete_tarea(tarea_id)
+                    st.success("Tarea eliminada.")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"Error: {ex}")
+        
+        st.divider()
+
+
 # ── ROUTER ────────────────────────────────────────────────────────────────────
 pages = {
     "🏠 Inicio":    page_dashboard,
@@ -1630,6 +1793,7 @@ pages = {
     "👥 Monitores": page_monitores,
     "📋 Ensayos":   page_ensayos,
     "📁 Documentos": page_documentos,
+    "💬 Tareas":    page_tareas,
     "🔑 Usuarios":  page_usuarios,
 }
 pages[nav]()
