@@ -231,7 +231,18 @@ def render_calendario_general(section_key: str, can_manage_blocks: bool = False)
     hasta_grid = weeks[-1][-1].isoformat()
 
     try:
-        visitas_por_dia = get_visitas_count_by_date(desde=desde_grid, hasta=hasta_grid)
+        if is_admin():
+            visitas_por_dia = get_visitas_count_by_date(desde=desde_grid, hasta=hasta_grid)
+        else:
+            # En perfil monitor, el calendario muestra solo visitas de su ensayo.
+            visitas_por_dia = {}
+            ensayo_scope = scope_ensayo_id()
+            if ensayo_scope is not None:
+                df_scope = get_visitas_df(ensayo_id=ensayo_scope, desde=desde_grid, hasta=hasta_grid)
+                for f in df_scope["fecha"].fillna(""):
+                    if f:
+                        visitas_por_dia[f] = visitas_por_dia.get(f, 0) + 1
+
         bloqueados_rows = get_dias_bloqueados(desde=desde_grid, hasta=hasta_grid)
         bloqueados_map = {r.get("fecha"): r.get("motivo", "") for r in bloqueados_rows}
         render_month_calendar(anio, mes, visitas_por_dia, bloqueados_map)
@@ -244,6 +255,57 @@ def render_calendario_general(section_key: str, can_manage_blocks: bool = False)
         bloqueados_rows = []
 
     st.caption("Leyenda: Libre (sin bloqueo), Bloqueado (0 visitas), Solo 1 visita, Normal (2 visitas).")
+
+    st.divider()
+    st.subheader("🔎 Detalle del día")
+    fecha_detalle = st.date_input("Selecciona un día", value=date.today(), key=f"{section_key}_detalle_fecha")
+    fecha_detalle_iso = fecha_detalle.isoformat()
+
+    if is_admin():
+        df_dia = get_visitas_df(desde=fecha_detalle_iso, hasta=fecha_detalle_iso)
+    else:
+        ensayo_scope = scope_ensayo_id()
+        if ensayo_scope is None:
+            st.error("Tu usuario no tiene ensayo asignado.")
+            df_dia = pd.DataFrame()
+        else:
+            df_dia = get_visitas_df(ensayo_id=ensayo_scope, desde=fecha_detalle_iso, hasta=fecha_detalle_iso)
+
+    if df_dia.empty:
+        if is_admin():
+            st.info("No hay visitas registradas en ese día.")
+        else:
+            st.info("No hay visitas de tu ensayo en ese día.")
+    else:
+        if is_admin():
+            st.caption("Ensayos con visitas en el día seleccionado")
+            df_ensayos_dia = (
+                df_dia[["ensayo_codigo", "ensayo_nombre"]]
+                .drop_duplicates()
+                .sort_values(["ensayo_codigo", "ensayo_nombre"], ascending=[True, True])
+                .rename(columns={"ensayo_codigo": "Código", "ensayo_nombre": "Ensayo"})
+            )
+            st.dataframe(df_ensayos_dia, use_container_width=True, hide_index=True)
+        else:
+            ensayo_scope = scope_ensayo_id()
+            ensayo = get_ensayo_by_id(ensayo_scope) if ensayo_scope is not None else None
+            if ensayo:
+                st.caption(f"Mostrando solo tu ensayo: {ensayo.get('codigo', '')} — {ensayo.get('nombre', '')}")
+
+        cols_show = ["fecha", "hora", "tipo", "estado", "monitor_nombre", "notas"]
+        if is_admin():
+            cols_show = ["fecha", "hora", "ensayo_codigo", "monitor_nombre", "tipo", "estado", "notas"]
+
+        df_detalle = df_dia[cols_show].copy()
+        df_detalle["fecha"] = pd.to_datetime(df_detalle["fecha"]).dt.strftime("%d/%m/%Y")
+        df_detalle["estado"] = df_detalle["estado"].map(ESTADO_LABEL)
+
+        if is_admin():
+            df_detalle.columns = ["Fecha", "Hora", "Ensayo", "Monitor", "Tipo", "Estado", "Notas"]
+        else:
+            df_detalle.columns = ["Fecha", "Hora", "Tipo", "Estado", "Monitor", "Notas"]
+
+        st.dataframe(df_detalle, use_container_width=True, hide_index=True)
 
     if not can_manage_blocks:
         return
