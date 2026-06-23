@@ -154,7 +154,6 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
     .gvm-state-full { background: #ffe9e9; }
     .gvm-state-locked { background: #eceff3; }
     .gvm-chip { display: inline-block; font-size: 0.78rem; padding: 2px 6px; border-radius: 999px; background: #fff; border: 1px solid #d9d9d9; }
-    .gvm-ensayo { margin-top: 6px; font-size: 0.72rem; color: #384860; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     </style>
     """
 
@@ -195,7 +194,7 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
                 chip = f"{n} visitas"
             elif n == 1:
                 cls = "gvm-state-mid"
-                chip = "1 visita"
+                chip = ensayo_label if ensayo_label else "1 visita"
             else:
                 cls = "gvm-state-ok"
                 chip = "Libre"
@@ -207,7 +206,6 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
                 f"<td class='{cls}'>"
                 f"<div class='gvm-day'>{day.day}</div>"
                 f"<span class='gvm-chip'>{chip}</span>"
-                f"<div class='gvm-ensayo'>{ensayo_label}</div>" if ensayo_label else f"<div class='gvm-ensayo'>&nbsp;</div>"
                 "</td>"
             )
         html += "</tr>"
