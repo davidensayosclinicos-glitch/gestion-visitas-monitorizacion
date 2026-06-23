@@ -133,7 +133,7 @@ def mlabel(m):
     return f"{m['nombre']} {m['apellidos']}{extra}"
 
 
-def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloqueados: dict):
+def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloqueados: dict, ensayos_por_dia: dict):
     week_names = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
     cal = calendar.Calendar(firstweekday=0)
     weeks = cal.monthdatescalendar(year, month)
@@ -154,6 +154,7 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
     .gvm-state-full { background: #ffe9e9; }
     .gvm-state-locked { background: #eceff3; }
     .gvm-chip { display: inline-block; font-size: 0.78rem; padding: 2px 6px; border-radius: 999px; background: #fff; border: 1px solid #d9d9d9; }
+    .gvm-ensayo { margin-top: 6px; font-size: 0.72rem; color: #384860; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     </style>
     """
 
@@ -167,6 +168,7 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
         for day in week:
             f = day.isoformat()
             n = int(visitas_por_dia.get(f, 0))
+            ensayo_label = ensayos_por_dia.get(f, "")
             is_blocked = f in bloqueados
             in_current_month = day.month == month
 
@@ -205,6 +207,7 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
                 f"<td class='{cls}'>"
                 f"<div class='gvm-day'>{day.day}</div>"
                 f"<span class='gvm-chip'>{chip}</span>"
+                f"<div class='gvm-ensayo'>{ensayo_label}</div>" if ensayo_label else f"<div class='gvm-ensayo'>&nbsp;</div>"
                 "</td>"
             )
         html += "</tr>"
@@ -231,21 +234,42 @@ def render_calendario_general(section_key: str, can_manage_blocks: bool = False)
     hasta_grid = weeks[-1][-1].isoformat()
 
     try:
+        visitas_por_dia = {}
+        ensayos_por_dia = {}
+
         if is_admin():
-            visitas_por_dia = get_visitas_count_by_date(desde=desde_grid, hasta=hasta_grid)
+            df_scope = get_visitas_df(desde=desde_grid, hasta=hasta_grid)
         else:
             # En perfil monitor, el calendario muestra solo visitas de su ensayo.
-            visitas_por_dia = {}
             ensayo_scope = scope_ensayo_id()
+            df_scope = pd.DataFrame()
             if ensayo_scope is not None:
                 df_scope = get_visitas_df(ensayo_id=ensayo_scope, desde=desde_grid, hasta=hasta_grid)
-                for f in df_scope["fecha"].fillna(""):
-                    if f:
-                        visitas_por_dia[f] = visitas_por_dia.get(f, 0) + 1
+
+        if not df_scope.empty:
+            for fecha_key, group in df_scope.groupby("fecha"):
+                if not fecha_key:
+                    continue
+                visitas_por_dia[fecha_key] = int(len(group))
+
+                codigos = [str(c).strip() for c in group["ensayo_codigo"].fillna("") if str(c).strip()]
+                codigos_unique = list(dict.fromkeys(codigos))
+                if not codigos_unique:
+                    continue
+
+                if is_admin():
+                    if len(codigos_unique) == 1:
+                        ensayos_por_dia[fecha_key] = codigos_unique[0]
+                    elif len(codigos_unique) == 2:
+                        ensayos_por_dia[fecha_key] = f"{codigos_unique[0]} / {codigos_unique[1]}"
+                    else:
+                        ensayos_por_dia[fecha_key] = f"{codigos_unique[0]} +{len(codigos_unique) - 1}"
+                else:
+                    ensayos_por_dia[fecha_key] = codigos_unique[0]
 
         bloqueados_rows = get_dias_bloqueados(desde=desde_grid, hasta=hasta_grid)
         bloqueados_map = {r.get("fecha"): r.get("motivo", "") for r in bloqueados_rows}
-        render_month_calendar(anio, mes, visitas_por_dia, bloqueados_map)
+        render_month_calendar(anio, mes, visitas_por_dia, bloqueados_map, ensayos_por_dia)
     except Exception as ex:
         st.error(
             "No se pudo cargar el calendario de bloqueos. "
