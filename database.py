@@ -689,6 +689,20 @@ def reset_usuario_password(user_id, new_password):
     _update_row_by_id("usuarios", user_id, {"password_hash": _hash_password(new_password)})
 
 
+def update_usuario_username(user_id, new_username):
+    """Actualiza el nombre de usuario (username)."""
+    new_username_clean = (new_username or "").strip()
+    if not new_username_clean:
+        raise ValueError("El usuario es obligatorio.")
+    
+    # Verificar que no exista otro usuario con el mismo nombre
+    existing = get_usuario_by_username(new_username_clean)
+    if existing and int(existing.get("id") or 0) != int(user_id or 0):
+        raise ValueError("Ese nombre de usuario ya existe.")
+    
+    _update_row_by_id("usuarios", user_id, {"username": new_username_clean})
+
+
 def authenticate_user(username, password):
     username_clean = (username or "").strip()
 

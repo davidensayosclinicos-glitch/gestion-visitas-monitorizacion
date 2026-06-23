@@ -14,7 +14,7 @@ from database import (
     get_visitas_df, get_visita_by_id, create_visita, create_visitas_rango, update_visita, delete_visita,
     get_stats, get_proximas_visitas, get_resumen_por_ensayo,
     get_dias_bloqueados, bloquear_dia, bloquear_rango, desbloquear_dia, desbloquear_rango, get_visitas_count_by_date,
-    authenticate_user, list_usuarios_monitor, create_usuario_monitor, set_usuario_activo, reset_usuario_password,
+    authenticate_user, list_usuarios_monitor, create_usuario_monitor, set_usuario_activo, reset_usuario_password, update_usuario_username,
 )
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
@@ -353,7 +353,7 @@ with st.sidebar:
 
     nav_options = ["🏠 Inicio", "📅 Visitas"]
     if is_admin():
-        nav_options.extend(["👥 Monitores", "📋 Ensayos"])
+        nav_options.extend(["👥 Monitores", "📋 Ensayos", "🔑 Usuarios"])
 
     nav = st.radio(
         "Navegación",
@@ -1176,11 +1176,142 @@ def page_ensayos():
             dialog_confirmar_delete("ensayo", sel_id, sel_codigo)
 
 
+# ── DIALOGS: USUARIOS ─────────────────────────────────────────────────────────
+
+@st.dialog("Editar Usuario", width="large")
+def dialog_editar_usuario(user_id, username_actual):
+    """Diálogo para editar username y contraseña de un usuario."""
+    st.subheader("Editar Usuario")
+    
+    with st.form("form_editar_usuario"):
+        new_username = st.text_input("Nuevo usuario", value=username_actual, placeholder="usuario")
+        new_password = st.text_input("Nueva contraseña (opcional)", type="password", placeholder="Dejar vacío para no cambiar")
+        
+        if st.form_submit_button("💾 Guardar cambios", use_container_width=True, type="primary"):
+            try:
+                # Actualizar usuario si cambió
+                if new_username.strip() != username_actual.strip():
+                    update_usuario_username(user_id, new_username)
+                    st.success("✅ Usuario actualizado")
+                
+                # Actualizar contraseña si se ingresó
+                if new_password.strip():
+                    reset_usuario_password(user_id, new_password)
+                    st.success("✅ Contraseña actualizada")
+                
+                st.rerun()
+            except ValueError as e:
+                st.error(f"❌ Error: {e}")
+            except Exception as e:
+                st.error(f"❌ Error al guardar: {e}")
+
+
+# ── PÁGINA: USUARIOS ──────────────────────────────────────────────────────────
+
+def page_usuarios():
+    """Página de gestión de usuarios (solo para admin)."""
+    if not is_admin():
+        st.error("❌ No tienes permiso para acceder a esta pantalla.")
+        return
+    
+    st.header("🔑 Gestión de Usuarios")
+    st.caption("Visualiza, edita usuarios y contraseñas de todos los monitores.")
+    st.divider()
+    
+    # Obtener lista de usuarios
+    usuarios = list_usuarios_monitor()
+    
+    if not usuarios:
+        st.info("📭 No hay usuarios creados.")
+        return
+    
+    # Preparar datos para mostrar
+    rows = []
+    for u in usuarios:
+        monitor_nom = (f"{u.get('monitor_nombre', '')} {u.get('monitor_apellidos', '')}").strip() or "(Admin)"
+        ensayo_txt = u.get('ensayo_codigo', '') or "(N/A)"
+        activo = "🟢 Activo" if int(u.get("activo") or 0) else "🔴 Inactivo"
+        
+        rows.append({
+            "_id": u.get("id"),
+            "_username": u.get("username", ""),
+            "Usuario": u.get("username", ""),
+            "Rol": u.get("rol", "").upper(),
+            "Monitor": monitor_nom,
+            "Ensayo": ensayo_txt,
+            "Estado": activo,
+        })
+    
+    # Convertir a DataFrame
+    df = pd.DataFrame(rows)
+    
+    # Mostrar tabla
+    st.subheader("📋 Lista de Usuarios")
+    event = st.dataframe(
+        df[["Usuario", "Rol", "Monitor", "Ensayo", "Estado"]],
+        use_container_width=True,
+        hide_index=True,
+        selection_mode="single-row",
+        on_select="rerun",
+        key="sel_usuarios_page",
+    )
+    
+    # Si hay usuario seleccionado, mostrar opciones
+    selected = event.selection.rows
+    if selected:
+        row_idx = selected[0]
+        user_id = int(df.iloc[row_idx]["_id"])
+        username = df.iloc[row_idx]["_username"]
+        rol = df.iloc[row_idx]["Rol"]
+        monitor = df.iloc[row_idx]["Monitor"]
+        estado = df.iloc[row_idx]["Estado"]
+        
+        st.divider()
+        st.subheader(f"Opciones para: **{username}**")
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        # Información del usuario
+        with col1:
+            st.text(f"👤 Usuario: {username}")
+            st.text(f"📊 Rol: {rol}")
+            st.text(f"🏥 Monitor: {monitor}")
+            st.text(f"📌 Estado: {estado}")
+        
+        # Botón para editar
+        with col2:
+            if st.button("✏️ Editar", use_container_width=True, type="primary"):
+                dialog_editar_usuario(user_id, username)
+        
+        # Botón para cambiar estado
+        with col3:
+            estado_actual = int(df.iloc[row_idx]["Estado"].count("🟢"))
+            texto_btn = "Desactivar" if estado_actual else "Activar"
+            if st.button(f"{'🔴' if estado_actual else '🟢'} {texto_btn}", use_container_width=True):
+                try:
+                    set_usuario_activo(user_id, not bool(estado_actual))
+                    st.success(f"✅ Usuario {'desactivado' if estado_actual else 'activado'}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+    
+    st.divider()
+    st.info(
+        "💡 **Cambiar credenciales de usuario:**\n\n"
+        "1. Selecciona un usuario de la tabla\n"
+        "2. Haz clic en '✏️ Editar'\n"
+        "3. Modifica el usuario y/o contraseña\n"
+        "4. Haz clic en 'Guardar cambios'\n\n"
+        "**Nota:** La contraseña debe tener mínimo 8 caracteres."
+    )
+
+
 # ── ROUTER ────────────────────────────────────────────────────────────────────
 pages = {
     "🏠 Inicio":    page_dashboard,
     "📅 Visitas":   page_visitas,
     "👥 Monitores": page_monitores,
     "📋 Ensayos":   page_ensayos,
+    "🔑 Usuarios":  page_usuarios,
 }
 pages[nav]()
