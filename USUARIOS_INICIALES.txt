@@ -1,0 +1,48 @@
+============================================================
+CREDENCIALES DE USUARIOS - Gestión de Visitas
+Generadas: 2026-06-23
+============================================================
+
+USUARIO ADMIN:
+------------------------------------------------------------
+Usuario: CABUEÑES
+Contraseña: CABUEÑES
+------------------------------------------------------------
+
+USUARIOS DE MONITORES:
+------------------------------------------------------------
+
+Monitor: Javier Prieto
+Usuario: javier.prieto
+Contraseña: Javier
+Ensayo: DREAMM-8
+
+Monitor: AINA MARIA RIGO
+Usuario: aina.maria.rigo
+Contraseña: AINA MARIA
+Ensayo: R5458-ONC-2274
+
+Monitor: SUSANA RUBI
+Usuario: susana.rubi
+Contraseña: SUSANA
+Ensayo: BGB
+
+Monitor: GEMMA CAPO
+Usuario: gemma.capo
+Contraseña: GEMMA
+Ensayo: GEM2017FIT
+
+Monitor: IRENE LLORENTE
+Usuario: irene.llorente
+Contraseña: IRENE
+Ensayo: R5458-ONC-2245
+
+Monitor: JESÚS GONZÁLEZ
+Usuario: jesus.gonzalez
+Contraseña: JESÚS
+Ensayo: R5458-ONC-2256
+
+Monitor: IRENE BERZOSA
+Usuario: irene.berzosa
+Contraseña: IRENE
+Ensayo: CAEL101-301/2
