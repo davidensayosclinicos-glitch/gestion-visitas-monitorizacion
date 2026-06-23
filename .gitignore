@@ -7,6 +7,9 @@ __pycache__/
 *.pyo
 .env
 
+# Streamlit secrets (credenciales locales)
+.streamlit/secrets.toml
+
 # Sistema
 .DS_Store
 Thumbs.db
