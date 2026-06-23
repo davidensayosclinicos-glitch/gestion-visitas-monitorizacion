@@ -585,7 +585,7 @@ with st.sidebar:
 
     nav_options = ["🏠 Inicio", "📅 Visitas"]
     if is_admin():
-        nav_options.extend(["👥 Monitores", "📋 Ensayos", "📁 Documentos", "� Tareas", "🔑 Usuarios"])
+        nav_options.extend(["👥 Monitores", "📋 Ensayos", "📁 Documentos", "💬 Tareas", "🔑 Usuarios"])
     else:
         nav_options.extend(["📁 Documentos", "💬 Tareas"])
 
