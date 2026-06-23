@@ -191,7 +191,7 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
                 chip = "Max 1 visita"
             elif n >= max_visitas_dia and max_visitas_dia > 0:
                 cls = "gvm-state-full"
-                chip = f"{n} visitas"
+                chip = ensayo_label if (n == 2 and ensayo_label) else f"{n} visitas"
             elif n == 1:
                 cls = "gvm-state-mid"
                 chip = ensayo_label if ensayo_label else "1 visita"
