@@ -1714,7 +1714,8 @@ def render_tarea_chat(tarea, is_admin=False, monitor_id=None):
         col_h.markdown(f"**{titulo}**")
         if descripcion:
             col_h.caption(f"📝 {descripcion[:120]}...")
-        col_h.caption(f"👤 {monitor_nombre} · {creado_en[:10] if creado_en else 'sin fecha'}")
+        fecha_creacion = str(creado_en)[:10] if creado_en else 'sin fecha'
+        col_h.caption(f"👤 {monitor_nombre} · {fecha_creacion}")
         
         # Estado badge
         estado_labels = {"abierta": "🟠 Abierta", "en_coordinacion": "🔵 En coordinación", "cerrada": "🟢 Cerrada"}
@@ -1731,11 +1732,12 @@ def render_tarea_chat(tarea, is_admin=False, monitor_id=None):
                 contenido = msg.get("contenido", "")
                 tipo = msg.get("tipo", "mensaje")
                 timestamp = msg.get("creado_en", "")
+                timestamp_str = str(timestamp)[:10] if timestamp else ""
                 
                 if tipo == "sistema":
                     st.info(f"📌 **[Sistema]** {contenido}")
                 else:
-                    st.markdown(f"**{usuario}** ({timestamp[:10]}): {contenido}")
+                    st.markdown(f"**{usuario}** ({timestamp_str}): {contenido}")
         
         # Agregar respuesta
         col_m, col_b = st.columns([5, 1])
