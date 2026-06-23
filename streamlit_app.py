@@ -427,7 +427,14 @@ def dialog_nueva_visita():
 
         c5, c6 = st.columns(2)
         tipo   = c5.selectbox("Tipo de visita *", TIPOS_VISITA)
-        estado = c6.selectbox("Estado", ESTADOS_VISITA, format_func=lambda x: ESTADO_LABEL.get(x, x))
+        
+        # Monitores solo pueden crear visitas pendientes
+        if is_monitor():
+            estado = "pendiente"
+            st.info("📝 Tu visita se registrará como **PENDIENTE** y deberá ser confirmada por el administrador.")
+        else:
+            # Admin puede elegir el estado
+            estado = c6.selectbox("Estado", ESTADOS_VISITA, format_func=lambda x: ESTADO_LABEL.get(x, x))
 
         notas = st.text_area("Notas", height=80,
                              placeholder="Observaciones, documentos solicitados, incidencias...")
@@ -829,6 +836,60 @@ def page_dashboard():
         c2.metric("⏳ Pendientes / Confirmadas", stats["pendientes"])
         c3.metric("✅ Realizadas (total)", stats["realizadas"])
         c4.metric("🔬 Ensayos activos", stats["ensayos_activos"])
+
+        st.divider()
+        
+        # ⚠️ ALERTAS DE VISITAS PENDIENTES DE CONFIRMACIÓN
+        df_visitas = get_visitas_df()
+        visitas_pendientes = df_visitas[df_visitas["estado"] == "pendiente"].copy()
+        
+        if not visitas_pendientes.empty:
+            visitas_pendientes = visitas_pendientes.sort_values("fecha", ascending=True)
+            st.warning(f"⚠️ **{len(visitas_pendientes)} visita(s) PENDIENTE(S) de confirmación**")
+            
+            # Tabla de visitas pendientes
+            pendientes_show = visitas_pendientes[["id", "fecha", "hora", "monitor_nombre", "ensayo_codigo", "tipo", "notas"]].copy()
+            pendientes_show["fecha"] = pd.to_datetime(pendientes_show["fecha"]).dt.strftime("%d/%m/%Y")
+            pendientes_show.columns = ["ID", "Fecha", "Hora", "Monitor", "Ensayo", "Tipo", "Notas"]
+            
+            event_pend = st.dataframe(
+                pendientes_show,
+                use_container_width=True,
+                hide_index=True,
+                selection_mode="single-row",
+                on_select="rerun",
+                key="sel_visitas_pendientes",
+            )
+            
+            sel_pend = event_pend.selection.rows
+            if sel_pend:
+                row_idx = sel_pend[0]
+                visita_id = int(visitas_pendientes.iloc[row_idx]["id"])
+                visita_info = visitas_pendientes.iloc[row_idx]
+                
+                col_a, col_b, col_c = st.columns(3)
+                
+                with col_a:
+                    if st.button("✅ Confirmar", use_container_width=True, type="primary"):
+                        try:
+                            update_visita(visita_id, {"estado": "confirmada"})
+                            st.success("✅ Visita confirmada")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error: {e}")
+                
+                with col_b:
+                    if st.button("❌ Rechazar", use_container_width=True):
+                        try:
+                            update_visita(visita_id, {"estado": "cancelada"})
+                            st.success("❌ Visita rechazada")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error: {e}")
+                
+                with col_c:
+                    if st.button("✏️ Editar", use_container_width=True):
+                        dialog_editar_visita(visita_id)
 
         st.divider()
         render_calendario_general("home", can_manage_blocks=True)
