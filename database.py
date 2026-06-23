@@ -940,12 +940,22 @@ def create_visita(data):
 
 
 def update_visita(vid, data):
-    _validar_limites_visita(
-        data.get("fecha", ""),
-        data.get("monitor_id"),
-        exclude_visita_id=vid,
-    )
     data = dict(data)
+
+    # Para actualizaciones parciales (p.ej. solo estado), no exigir fecha/monitor.
+    # Validamos límites solo cuando se intenta cambiar fecha y/o monitor.
+    if "fecha" in data or "monitor_id" in data:
+        actual = get_visita_by_id(vid)
+        if not actual:
+            raise ValueError("La visita no existe.")
+        fecha_val = data.get("fecha", actual.get("fecha", ""))
+        monitor_val = data.get("monitor_id", actual.get("monitor_id"))
+        _validar_limites_visita(
+            fecha_val,
+            monitor_val,
+            exclude_visita_id=vid,
+        )
+
     data["actualizado_en"] = datetime.utcnow().isoformat()
     _update_row_by_id("visitas", vid, data)
 
