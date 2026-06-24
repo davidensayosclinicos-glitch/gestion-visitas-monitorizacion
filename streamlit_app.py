@@ -645,19 +645,10 @@ def dialog_nueva_visita():
             mi = st.selectbox("Monitor *", range(len(monitores)), format_func=lambda i: mlabel(monitores[i]))
             monitor_id_sel = monitores[mi]["id"]
 
-        # Opción de rango de fechas
-        col_rango = st.columns(1)[0]
-        es_rango = col_rango.checkbox("Crear visitas para un rango de fechas", value=False, key="visita_rango_check")
-        
-        if es_rango:
-            c3, c4 = st.columns(2)
-            fecha_desde = c3.date_input("Desde *", value=date.today(), key="visita_desde")
-            fecha_hasta = c4.date_input("Hasta *", value=date.today(), key="visita_hasta")
-            hora_val = st.time_input("Hora", value=datetime.strptime("09:00", "%H:%M").time(), step=900)
-        else:
-            c3, c4 = st.columns(2)
-            fecha = c3.date_input("Fecha *", value=date.today())
-            hora_val = c4.time_input("Hora", value=datetime.strptime("09:00", "%H:%M").time(), step=900)
+        c3, c4 = st.columns(2)
+        fecha_desde = c3.date_input("Fecha de inicio *", value=date.today(), key="visita_desde")
+        fecha_hasta = c4.date_input("Fecha de fin *", value=date.today(), key="visita_hasta")
+        hora_val = st.time_input("Hora", value=datetime.strptime("09:00", "%H:%M").time(), step=900)
 
         c5, c6 = st.columns(2)
         tipo   = c5.selectbox("Tipo de visita *", TIPOS_VISITA)
@@ -675,30 +666,23 @@ def dialog_nueva_visita():
 
         if st.form_submit_button("💾 Guardar visita(s)", use_container_width=True, type="primary"):
             try:
-                if es_rango:
-                    if fecha_desde > fecha_hasta:
-                        st.error("La fecha inicial no puede ser mayor que la fecha final.")
-                        return
-                    count = create_visitas_rango({
-                        "ensayo_id":  ensayo_id_sel,
-                        "monitor_id": monitor_id_sel,
-                        "hora":       hora_val.strftime("%H:%M"),
-                        "tipo":       tipo,
-                        "estado":     estado,
-                        "notas":      notas.strip(),
-                    }, fecha_desde.isoformat(), fecha_hasta.isoformat())
-                    st.success(f"✅ {count} visita(s) registrada(s) correctamente.")
-                else:
-                    create_visita({
-                        "ensayo_id":  ensayo_id_sel,
-                        "monitor_id": monitor_id_sel,
-                        "fecha":      fecha.isoformat(),
-                        "hora":       hora_val.strftime("%H:%M"),
-                        "tipo":       tipo,
-                        "estado":     estado,
-                        "notas":      notas.strip(),
-                    })
+                if fecha_desde > fecha_hasta:
+                    st.error("La fecha inicial no puede ser mayor que la fecha final.")
+                    return
+
+                count = create_visitas_rango({
+                    "ensayo_id":  ensayo_id_sel,
+                    "monitor_id": monitor_id_sel,
+                    "hora":       hora_val.strftime("%H:%M"),
+                    "tipo":       tipo,
+                    "estado":     estado,
+                    "notas":      notas.strip(),
+                }, fecha_desde.isoformat(), fecha_hasta.isoformat())
+
+                if count == 1:
                     st.success("✅ Visita registrada correctamente.")
+                else:
+                    st.success(f"✅ {count} visita(s) registrada(s) correctamente.")
             except ValueError as ex:
                 st.error(str(ex))
                 return
