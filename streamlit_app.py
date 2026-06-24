@@ -137,7 +137,14 @@ def mlabel(m):
     return f"{m['nombre']} {m['apellidos']}{extra}"
 
 
-def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloqueados: dict, ensayos_por_dia: dict):
+def render_month_calendar(
+    year: int,
+    month: int,
+    visitas_por_dia: dict,
+    bloqueados: dict,
+    ensayos_por_dia: dict,
+    show_ensayo_labels: bool = True,
+):
     week_names = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
     cal = calendar.Calendar(firstweekday=0)
     weeks = cal.monthdatescalendar(year, month)
@@ -192,16 +199,20 @@ def render_month_calendar(year: int, month: int, visitas_por_dia: dict, bloquead
                 chip = "Bloqueado"
             elif is_blocked and max_visitas_dia == 1:
                 cls = "gvm-state-mid"
-                chip = "Max 1 visita"
+                chip = "Max 1 visita" if show_ensayo_labels else ("Sin hueco" if n >= 1 else "1 disponible")
             elif n >= max_visitas_dia and max_visitas_dia > 0:
                 cls = "gvm-state-full"
-                chip = ensayo_label if (n == 2 and ensayo_label) else f"{n} visitas"
+                chip = ensayo_label if (show_ensayo_labels and n == 2 and ensayo_label) else (
+                    f"{n} visitas" if show_ensayo_labels else "Sin hueco"
+                )
             elif n == 1:
                 cls = "gvm-state-mid"
-                chip = ensayo_label if ensayo_label else "1 visita"
+                chip = ensayo_label if (show_ensayo_labels and ensayo_label) else (
+                    "1 visita" if show_ensayo_labels else "1 disponible"
+                )
             else:
                 cls = "gvm-state-ok"
-                chip = "Libre"
+                chip = "Libre" if show_ensayo_labels else (f"{max_visitas_dia} disponibles" if max_visitas_dia > 0 else "Bloqueado")
 
             if not in_current_month:
                 cls = "gvm-outside"
@@ -380,42 +391,41 @@ def render_calendario_general(section_key: str, can_manage_blocks: bool = False)
     hasta_grid = weeks[-1][-1].isoformat()
 
     try:
-        visitas_por_dia = {}
+        visitas_por_dia = get_visitas_count_by_date(desde=desde_grid, hasta=hasta_grid)
         ensayos_por_dia = {}
 
         if is_admin():
             df_scope = get_visitas_df(desde=desde_grid, hasta=hasta_grid)
         else:
-            # En perfil monitor, el calendario muestra solo visitas de su ensayo.
-            ensayo_scope = scope_ensayo_id()
             df_scope = pd.DataFrame()
-            if ensayo_scope is not None:
-                df_scope = get_visitas_df(ensayo_id=ensayo_scope, desde=desde_grid, hasta=hasta_grid)
 
-        if not df_scope.empty:
+        if is_admin() and not df_scope.empty:
             for fecha_key, group in df_scope.groupby("fecha"):
                 if not fecha_key:
                     continue
-                visitas_por_dia[fecha_key] = int(len(group))
 
                 codigos = [str(c).strip() for c in group["ensayo_codigo"].fillna("") if str(c).strip()]
                 codigos_unique = list(dict.fromkeys(codigos))
                 if not codigos_unique:
                     continue
 
-                if is_admin():
-                    if len(codigos_unique) == 1:
-                        ensayos_por_dia[fecha_key] = codigos_unique[0]
-                    elif len(codigos_unique) == 2:
-                        ensayos_por_dia[fecha_key] = f"{codigos_unique[0]} / {codigos_unique[1]}"
-                    else:
-                        ensayos_por_dia[fecha_key] = f"{codigos_unique[0]} +{len(codigos_unique) - 1}"
-                else:
+                if len(codigos_unique) == 1:
                     ensayos_por_dia[fecha_key] = codigos_unique[0]
+                elif len(codigos_unique) == 2:
+                    ensayos_por_dia[fecha_key] = f"{codigos_unique[0]} / {codigos_unique[1]}"
+                else:
+                    ensayos_por_dia[fecha_key] = f"{codigos_unique[0]} +{len(codigos_unique) - 1}"
 
         bloqueados_rows = get_dias_bloqueados(desde=desde_grid, hasta=hasta_grid)
         bloqueados_map = {r.get("fecha"): r.get("motivo", "") for r in bloqueados_rows}
-        render_month_calendar(anio, mes, visitas_por_dia, bloqueados_map, ensayos_por_dia)
+        render_month_calendar(
+            anio,
+            mes,
+            visitas_por_dia,
+            bloqueados_map,
+            ensayos_por_dia,
+            show_ensayo_labels=is_admin(),
+        )
     except Exception as ex:
         st.error(
             "No se pudo cargar el calendario de bloqueos. "
@@ -424,7 +434,10 @@ def render_calendario_general(section_key: str, can_manage_blocks: bool = False)
         st.caption(f"Detalle técnico: {ex}")
         bloqueados_rows = []
 
-    st.caption("Leyenda: Libre (sin bloqueo), Bloqueado (0 visitas), Solo 1 visita, Normal (2 visitas).")
+    if is_admin():
+        st.caption("Leyenda: Libre (sin bloqueo), Bloqueado (0 visitas), Solo 1 visita, Normal (2 visitas).")
+    else:
+        st.caption("Leyenda: 2/1 disponibles, Sin hueco, Bloqueado (0 visitas).")
 
     st.divider()
     st.subheader("🔎 Detalle del día")
