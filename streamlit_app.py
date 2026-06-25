@@ -626,6 +626,16 @@ with st.sidebar:
         else:
             st.info("La copia de seguridad solo está disponible para el administrador.")
 
+    st.divider()
+    st.caption("© 2026 David Carballo Beltrán. Todos los derechos reservados.")
+    st.caption(
+        "El código fuente, los contenidos, el diseño original y la documentación de esta "
+        "aplicación están protegidos por la normativa de propiedad intelectual. Queda "
+        "prohibida su reproducción, distribución, transformación, cesión o explotación no "
+        "autorizada. Acceso exclusivo para usuarios autorizados. La información y los "
+        "procedimientos contenidos en esta aplicación son confidenciales."
+    )
+
 
 # ── DIALOGS: VISITAS ──────────────────────────────────────────────────────────
 
