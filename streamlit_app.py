@@ -6,6 +6,7 @@ import calendar
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from database import (
     init_db,
@@ -77,6 +78,8 @@ ESTADO_LABEL = {
     "realizada":  "🟢 Realizada",  "cancelada": "🔴 Cancelada",
     "activo":     "🟢 Activo",    "en_pausa":  "🟡 En pausa",  "cerrado": "⚫ Cerrado",
 }
+
+LOGO_PATH = Path(__file__).with_name("ChatGPT Image 10 mar 2026, 09_42_13.png")
 
 
 def current_user():
@@ -584,6 +587,8 @@ require_login()
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
+    if LOGO_PATH.exists():
+        st.image(str(LOGO_PATH), use_container_width=True)
     st.markdown("## 🏥 Monitorización")
     st.caption("Coordinación de Ensayos Clínicos")
     st.caption(f"Usuario: **{current_user().get('username', '')}**")
