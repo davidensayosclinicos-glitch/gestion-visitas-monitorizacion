@@ -8,7 +8,7 @@ import pandas as pd
 from datetime import date, datetime, timedelta
 
 from database import (
-    init_db, get_backend_name,
+    init_db,
     get_ensayos, get_ensayo_by_id, create_ensayo, update_ensayo, delete_ensayo,
     get_monitores, get_monitor_by_id, create_monitor, update_monitor, delete_monitor,
     get_visitas_df, get_visita_by_id, create_visita, create_visitas_rango, update_visita, delete_visita,
@@ -586,11 +586,6 @@ require_login()
 with st.sidebar:
     st.markdown("## 🏥 Monitorización")
     st.caption("Coordinación de Ensayos Clínicos")
-    backend = get_backend_name()
-    if backend == "postgres":
-        st.caption("Backend: 🐘 PostgreSQL (DATABASE_URL)")
-    else:
-        st.caption("Backend: ☁️ Supabase API")
     st.caption(f"Usuario: **{current_user().get('username', '')}**")
     rol_text = "Administrador" if is_admin() else "Monitor"
     st.caption(f"Rol: {rol_text}")
