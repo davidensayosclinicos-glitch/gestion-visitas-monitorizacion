@@ -1351,8 +1351,8 @@ def get_tareas_por_monitor(monitor_id):
                 """
                 select t.id, t.titulo, t.descripcion, t.monitor_id, t.estado, t.creado_en, t.actualizado_en,
                        m.nombre as monitor_nombre, m.apellidos as monitor_apellidos
-                from tareas
-                join monitores m on m.id = tareas.monitor_id
+                from tareas t
+                join monitores m on m.id = t.monitor_id
                 where m.ensayo_id = (
                     select ensayo_id
                     from monitores
