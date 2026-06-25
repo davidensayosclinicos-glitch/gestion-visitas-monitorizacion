@@ -725,15 +725,45 @@ def update_usuario_username(user_id, new_username):
     _update_row_by_id("usuarios", user_id, {"username": new_username_clean})
 
 
+def _ensure_admin_user_record():
+    if not ADMIN_USER or not ADMIN_PASSWORD:
+        return None
+
+    admin_user = get_usuario_by_username(ADMIN_USER)
+    if admin_user:
+        if _norm_text(admin_user.get("rol")) != "admin":
+            raise RuntimeError(
+                "El usuario definido en ADMIN_USER ya existe, pero no tiene rol admin. "
+                "Corrige ese usuario o cambia ADMIN_USER."
+            )
+        if not int(admin_user.get("activo") or 0):
+            set_usuario_activo(admin_user.get("id"), True)
+            admin_user["activo"] = 1
+        return admin_user
+
+    _insert_row(
+        "usuarios",
+        {
+            "username": ADMIN_USER,
+            "password_hash": _hash_password(ADMIN_PASSWORD),
+            "rol": "admin",
+            "monitor_id": None,
+            "activo": 1,
+        },
+    )
+    return get_usuario_by_username(ADMIN_USER)
+
+
 def authenticate_user(username, password):
     username_clean = (username or "").strip()
 
     # Admin por variables de entorno (recomendado para el propietario de la app).
     if ADMIN_USER and ADMIN_PASSWORD:
         if _norm_text(username_clean) == _norm_text(ADMIN_USER) and password == ADMIN_PASSWORD:
+            admin_user = _ensure_admin_user_record() or {}
             return {
-                "id": None,
-                "username": ADMIN_USER,
+                "id": admin_user.get("id"),
+                "username": admin_user.get("username") or ADMIN_USER,
                 "rol": "admin",
                 "monitor_id": None,
                 "ensayo_id": None,
