@@ -3,6 +3,7 @@ database.py — Capa de acceso a datos (PostgreSQL/Supabase)
 Gestion de Visitas de Monitorizacion — Ensayos Clinicos
 """
 import os
+import json
 import hashlib
 import hmac
 import secrets
@@ -1297,6 +1298,51 @@ def get_documento_bytes(documento_id):
     if not row:
         return None
     return _decode_b64_to_bytes(row.get("contenido_b64", ""))
+
+
+def _json_safe_value(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, bytes):
+        return base64.b64encode(value).decode("ascii")
+    if isinstance(value, dict):
+        return {key: _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe_value(item) for item in value]
+    return value
+
+
+def export_database_backup_json():
+    if _using_postgres():
+        backend = "postgres"
+    else:
+        backend = "supabase"
+
+    tables = [
+        "ensayos",
+        "monitores",
+        "visitas",
+        "dias_bloqueados",
+        "usuarios",
+        "documentos",
+        "documentos_visibilidad",
+        "tareas",
+        "tareas_mensajes",
+    ]
+
+    payload = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "backend": backend,
+        "tables": {},
+    }
+
+    for table_name in tables:
+        if not _table_exists(table_name):
+            continue
+        rows = _fetch_all(table_name) or []
+        payload["tables"][table_name] = [_json_safe_value(dict(row)) for row in rows]
+
+    return json.dumps(payload, ensure_ascii=False, indent=2, default=str).encode("utf-8")
 
 
 # ── TAREAS (CHAT) ─────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ from database import (
     list_documentos, get_documento_bytes, get_usuarios_monitor_activos, delete_documento,
     tareas_feature_available, create_tarea, get_tareas_por_monitor, get_todas_tareas, get_tarea_by_id,
     add_mensaje_tarea, get_mensajes_tarea, update_estado_tarea, delete_tarea,
+    export_database_backup_json,
 )
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
@@ -612,7 +613,18 @@ with st.sidebar:
         do_logout()
 
     with st.expander("💾 Copia de seguridad"):
-        st.info("Los datos se guardan directamente en Supabase.")
+        if is_admin():
+            st.info("Descarga una copia local de la base de datos en formato JSON.")
+            backup_bytes = export_database_backup_json()
+            st.download_button(
+                "⬇️ Descargar base de datos",
+                data=backup_bytes,
+                file_name=f"backup_bd_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+        else:
+            st.info("La copia de seguridad solo está disponible para el administrador.")
 
 
 # ── DIALOGS: VISITAS ──────────────────────────────────────────────────────────
