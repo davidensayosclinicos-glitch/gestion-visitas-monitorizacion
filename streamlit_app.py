@@ -589,7 +589,6 @@ require_login()
 with st.sidebar:
     if LOGO_PATH.exists():
         st.image(str(LOGO_PATH), use_container_width=True)
-    st.markdown("## 🏥 Monitorización")
     st.caption("Aplicación de Gestión de Citas de Monitorización y Documentación de Ensayo de la Unidad de Ensayos Clínicos del Hospital Universitario de Cabueñes")
     st.caption(f"Usuario: **{current_user().get('username', '')}**")
     rol_text = "Administrador" if is_admin() else "Monitor"
