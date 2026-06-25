@@ -1349,16 +1349,36 @@ def get_tareas_por_monitor(monitor_id):
         with _pg_conn().cursor() as cur:
             cur.execute(
                 """
-                select id, titulo, descripcion, monitor_id, estado, creado_en, actualizado_en
+                select t.id, t.titulo, t.descripcion, t.monitor_id, t.estado, t.creado_en, t.actualizado_en,
+                       m.nombre as monitor_nombre, m.apellidos as monitor_apellidos
                 from tareas
-                where monitor_id = %s
-                order by actualizado_en desc, creado_en desc
+                join monitores m on m.id = tareas.monitor_id
+                where m.ensayo_id = (
+                    select ensayo_id
+                    from monitores
+                    where id = %s
+                    limit 1
+                )
+                order by t.actualizado_en desc, t.creado_en desc
                 """,
                 [monitor_id],
             )
             return cur.fetchall() or []
     
-    rows = _sb().table("tareas").select("*").eq("monitor_id", monitor_id).order("actualizado_en", desc=True).execute().data or []
+    monitor = _get_by_id("monitores", monitor_id)
+    ensayo_id = monitor.get("ensayo_id") if monitor else None
+    if ensayo_id is None:
+        return []
+
+    rows = _sb().table("tareas").select("*").order("actualizado_en", desc=True).execute().data or []
+    monitores = {m.get("id"): m for m in _fetch_all("monitores")}
+    rows = [row for row in rows if (monitores.get(row.get("monitor_id")) or {}).get("ensayo_id") == ensayo_id]
+
+    for row in rows:
+        monitor_row = monitores.get(row.get("monitor_id")) or {}
+        row["monitor_nombre"] = monitor_row.get("nombre", "")
+        row["monitor_apellidos"] = monitor_row.get("apellidos", "")
+
     return rows
 
 

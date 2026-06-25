@@ -1625,7 +1625,7 @@ def page_documentos():
 
 def page_tareas():
     st.header("💬 Tareas y Coordinación")
-    st.caption("Sistema de tareas en formato chat entre monitores y administrador.")
+    st.caption("Sistema de tareas en formato chat entre el administrador y los monitores del mismo ensayo.")
     
     if not tareas_feature_available():
         st.error("Falta migración SQL para tareas. Aplica el script en la carpeta sql y recarga la app.")
@@ -1666,7 +1666,7 @@ def page_tareas():
                 for tarea in tareas_cerradas:
                     render_tarea_chat(tarea, is_admin=True)
     else:
-        st.subheader("Mis tareas")
+        st.subheader("Tareas de tu ensayo")
         monitor_id = scope_monitor_id()
         if monitor_id is None:
             st.error("Tu usuario no está vinculado a un monitor válido.")
